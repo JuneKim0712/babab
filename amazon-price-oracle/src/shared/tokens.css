@@ -1,0 +1,32 @@
+/* "Ledger" design tokens. Keep in sync with TOKENS in src/content/widget-template.js
+   (content scripts cannot import CSS). Documented in docs/DESIGN.md. */
+:root {
+  --po-ink: #0f1111;
+  --po-graphite: #565959;
+  --po-rule: #d5d9d9;
+  --po-rule-strong: #8d9696;
+  --po-paper: #ffffff;
+  --po-wash: #f7f8f8;
+  --po-teal: #007185;
+  --po-teal-deep: #00596a;
+  --po-teal-tint: #e6f2f4;
+  --po-teal-range: #b9d8de;
+  --po-wait: #b12704;
+  --po-wait-tint: #fcf1ee;
+  --po-buy: #05705a;
+  --po-buy-tint: #ebf6f2;
+  --po-fair: #3d4242;
+  --po-fair-tint: #eff1f1;
+  --po-caution: #7a4400;
+  --po-caution-tint: #fff4df;
+  --po-font: "Amazon Ember", Arial, "Helvetica Neue", sans-serif;
+  --po-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { font-family: var(--po-font); color: var(--po-ink); background: var(--po-wash); }
+a { color: var(--po-teal); }
+a:hover { color: var(--po-teal-deep); }
+code { font-family: var(--po-mono); background: var(--po-fair-tint); padding: 1px 5px; border-radius: 3px; font-size: 0.92em; }
+:focus-visible { outline: 2px solid var(--po-teal); outline-offset: 2px; }
+.mark { width: 18px; height: 18px; color: var(--po-teal); flex: none; vertical-align: -3px; }

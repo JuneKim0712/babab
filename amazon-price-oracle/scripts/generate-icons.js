@@ -3,7 +3,7 @@
  * Generates icons/icon16.png, icon48.png and icon128.png with zero dependencies
  * (software rasteriser + zlib). Run: `node scripts/generate-icons.js`
  *
- * Design: indigo gradient rounded square with a white lightning bolt.
+ * Design: flat teal (#007185) rounded tile with a white axes-and-price-line mark.
  */
 'use strict';
 const fs = require('fs');
@@ -12,18 +12,33 @@ const zlib = require('zlib');
 
 const SIZES = [16, 48, 128];
 const SUPERSAMPLE = 4;
-const BOLT = [
-  [0.58, 0.1], [0.24, 0.55], [0.46, 0.55], [0.38, 0.9], [0.76, 0.42], [0.53, 0.42], [0.66, 0.1]
+// Chart mark: axes plus a rising price line, matching the widget header icon (18-unit grid).
+const STROKES = [
+  { w: 1.9, pts: [[2.5, 3], [2.5, 15], [15.5, 15]] },
+  { w: 1.9, pts: [[5.5, 11], [8.5, 7.5], [11, 9.5], [15, 4.5]] }
 ];
+const TEAL = [0, 113, 133];
+const RADIUS = 0.2;
 
-function insidePolygon(x, y, poly) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i];
-    const [xj, yj] = poly[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+function distToSegment(px, py, [ax, ay], [bx, by]) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function onMark(x, y) {
+  const gx = x * 18;
+  const gy = y * 18;
+  // Inset the glyph so it sits centred with padding inside the tile.
+  const ux = (gx - 9) / 0.72 + 9;
+  const uy = (gy - 9) / 0.72 + 9;
+  for (const { w, pts } of STROKES) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (distToSegment(ux, uy, pts[i], pts[i + 1]) <= w / 2) return true;
+    }
   }
-  return inside;
+  return false;
 }
 
 function insideRoundedSquare(x, y, radius) {
@@ -41,15 +56,14 @@ function render(size) {
         for (let sx = 0; sx < SUPERSAMPLE; sx++) {
           const x = (px + (sx + 0.5) / SUPERSAMPLE) / size;
           const y = (py + (sy + 0.5) / SUPERSAMPLE) / size;
-          if (!insideRoundedSquare(x, y, 0.22)) continue;
+          if (!insideRoundedSquare(x, y, RADIUS)) continue;
           a += 1;
-          if (insidePolygon(x, y, BOLT)) {
+          if (onMark(x, y)) {
             r += 255; g += 255; b += 255;
           } else {
-            const t = (x + y) / 2;
-            r += 79 + (124 - 79) * t; // #4f46e5 -> #7c3aed
-            g += 70 + (58 - 70) * t;
-            b += 229 + (237 - 229) * t;
+            r += TEAL[0];
+            g += TEAL[1];
+            b += TEAL[2];
           }
         }
       }

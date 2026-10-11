@@ -130,7 +130,7 @@ try {
   });
 
   await step('Gemini markets is live with no key and summarised in the card', async () => {
-    const text = await shadow(page, (root) => root.querySelector('.po-foot .po-btn')?.textContent);
+    const text = await shadow(page, (root) => root.querySelector('.po-foot .po-status')?.textContent);
     assert.match(text, /^Gemini Markets: Live — Fed hike odds \d+%, cut odds \d+% · recession odds \d+%$/);
     assert.equal(stats.markets, 1);
     assert.equal(stats.lastGeminiKeyHeader, null);
@@ -142,9 +142,9 @@ try {
       const card = getComputedStyle(root.querySelector('.po-card'));
       return { letterSpacing: card.letterSpacing, color: cs.color, size: cs.fontSize };
     });
-    assert.equal(styles.size, '13px');
+    assert.equal(styles.size, '14px');
     assert.equal(styles.letterSpacing, 'normal');
-    assert.equal(styles.color, 'rgb(15, 23, 42)');
+    assert.equal(styles.color, 'rgb(15, 17, 17)');
   });
 
   await page.screenshot({ path: path.join(shots, '01-widget-gemini-live.png'), clip: { x: 0, y: 0, width: 1100, height: 760 } });
@@ -365,7 +365,7 @@ try {
     await page.bringToFront();
     await page.goto('https://www.amazon.com/dp/B0CX23V259', { waitUntil: 'load' });
     await waitReady(page);
-    const text = await shadow(page, (root) => root.querySelector('.po-foot .po-btn')?.textContent);
+    const text = await shadow(page, (root) => root.querySelector('.po-foot .po-status')?.textContent);
     assert.equal(text, 'Gemini Markets: Offline — running on heuristic model');
     assert.match(await shadow(page, (root) => root.querySelector('.po-pill')?.className), /po-pill (WAIT|BUY_NOW|FAIR_PRICE)/);
     await page.screenshot({ path: path.join(shots, '03-widget-gemini-offline.png'), clip: { x: 0, y: 0, width: 1100, height: 760 } });

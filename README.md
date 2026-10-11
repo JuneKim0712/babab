@@ -122,6 +122,7 @@ Key properties:
 .
 ├── README.md                     This file (single source of truth for collaborators)
 ├── AGENTS.md                     Short rules for AI/code agents; points here
+├── docs/DESIGN.md                Design system: palette, components, sources
 ├── docs/USER_GUIDE.md            End-user guide for installing and using the extension (+ docs/images)
 ├── PriceOracle.zip               Ready-to-install build of the extension (regenerate with npm run pack)
 ├── .github/workflows/            CI (unit tests) and tag-triggered release (attaches PriceOracle.zip)
@@ -140,6 +141,7 @@ Key properties:
 | File | Role |
 | --- | --- |
 | `manifest.json` | MV3 manifest. Permissions: `storage`, `scripting`. Host permissions: `api.context.dev`, `api.gemini.com`, `www.amazon.com`, `amazon.com`. Declares the service worker (module), the five content scripts (in order), popup, options page (`open_in_tab`), icons. **`version` here is the release version.** |
+| `src/shared/tokens.css` | Design tokens (the "Ledger" palette) for popup, options and welcome; mirrored in `TOKENS` inside `widget-template.js`. See `docs/DESIGN.md`. |
 | `src/shared/constants.js` | Single source of truth for endpoints, the default context.dev key, storage keys, cache TTLs and message type names. Imported by the worker, popup and options. Content scripts cannot import it, so `content.js` mirrors the one message name it needs. |
 | `src/background/service-worker.js` | Message router (`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`), the analysis pipeline, in-flight request de-duplication, `last_analysis` bookkeeping, and the `onInstalled` handler (opens the welcome tab and injects content scripts into already-open Amazon tabs). Always replies `{ok, data}` or `{ok:false, error}`. |
 | `src/background/context-dev.js` | context.dev client. Calls `POST /v1/web/scrape` with `formats {json, markdown}` and a pricing JSON schema. `unwrapScrapeResponse` flattens the API's `{requested, success, data}` wrappers; `extractSignals` + `signalsFromMarkdown` turn the output into normalised signals (list price, current price, low/avg/high, discount %, rating, reviews, bought-past-month, category, availability). 24 h cache per ASIN (15 min negative cache for errors). `testContextDevConnection` uses a free endpoint. |
@@ -168,6 +170,7 @@ Key properties:
 | `tests/history.test.mjs` | Unit tests for the local price history. |
 | `tests/parser.test.mjs` | DOM tests (jsdom) for `amazon-parser.js` using the mock pages as fixtures. |
 | `tests/widget.test.mjs` | Pure rendering tests for `widget-template.js`: escaping, tiers, chip states. |
+| `tests/design.test.mjs` | Design guards: token sync, WCAG AA contrast, no emoji/gradients/soft shadows/indigo. |
 | `tests/package.test.mjs` | Guard tests: version sync, manifest file references, content-script order and classic-script rule, no inline scripts, committed zip is current. |
 | `tests/engine.test.mjs` | Unit tests (Node `node:test`): projection formulas, tier ordering, thresholds, signal extraction, scrape-response unwrapping, macro signal, heuristic determinism and bounds, seasonal calendar. |
 | `tests/e2e.mjs` | End-to-end test in a real Chrome: loads the unpacked extension, drives a mock Amazon page with mock context.dev and mock Gemini. Run against the shipped zip with `EXT_DIR`. |
