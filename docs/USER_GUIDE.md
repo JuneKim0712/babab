@@ -88,6 +88,7 @@ Click the PriceOracle icon to see the last product you looked at, how many analy
 
 You don't need to change anything. To open settings, right-click the PriceOracle icon and choose **Options**, or click the gear in the popup.
 
+- **Where PriceOracle appears:** two switches, **Product pages** and **Search results**. They take effect immediately, even on Amazon tabs that are already open. Turn one off if you only want the other.
 - **context.dev API key:** a working key is already filled in. Replace it with your own if you have one. **Reset to default** puts the built-in key back.
 - **Test Connection:** checks that both services are reachable and that your key is accepted, without using any credits.
 - Click **Save** to keep changes.

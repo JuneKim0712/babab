@@ -148,10 +148,10 @@ Key properties:
 | `src/content/amazon-parser.js` | `PriceOracle.Parser`: ASIN (`#ASIN`, URL regex fallback), price (multiple selector fallbacks, `.a-offscreen` and whole/fraction), list price, category (breadcrumb, dropdown, nav), title, rating; `parseProduct()` returns null on non-product pages or when no price is present. Search helpers: `isSearchPage`, `getSearchCategory`, `getSearchCards`, `parseSearchCard`. |
 | `src/content/widget-template.js` | `PriceOracle.Widget.render(state)`: returns the Shadow DOM HTML plus the isolated CSS for loading / error / ready states, the pill badges, the five-tier range bar and pin (`pinPosition` interpolates between tiers). `renderChip(state)` renders the compact search-result chip and its expandable panel. Re-asserts inheritable CSS properties on the card because the host element lives in Amazon's DOM. |
 | `src/content/content.js` | Entry point. Finds the anchor (after `#corePriceDisplay_desktop_feature_div`, else top of `#buybox`, else other price containers), creates one Shadow DOM host (`#price-oracle-host`), sends analysis requests, ignores stale responses (request sequence counter), observes the product container with a debounced `MutationObserver`, re-attaches the host if Amazon re-renders the DOM. |
-| `src/content/messaging.js` | `PriceOracle.send(message)`: `chrome.runtime.sendMessage` with one retry when the worker was asleep and a 90 s timeout. Both content scripts use it. |
+| `src/content/messaging.js` | `PriceOracle.send(message)`: `chrome.runtime.sendMessage` with one retry when the worker was asleep and a 90 s timeout. `PriceOracle.settings.get/watch` read the options switches and report changes live. Both content scripts use them. |
 | `src/content/search-results.js` | Search-page entry point (runs only on `/s` URLs): chip placement, lazy analysis queue (concurrency 4), chip click handling (expand, retry, deep analysis), observers for lazily loaded cards. |
 | `src/popup/popup.html/.css/.js` | Toolbar popup: last analysed product, counters, connection status badges, clear-cache button. |
-| `src/options/options.html/.css/.js` | Settings page: context.dev key (pre-filled with the default; saving the default removes the stored override), **Test Connection** (tests unsaved form values via the worker), status banner. |
+| `src/options/options.html/.css/.js` | Settings page: "Where PriceOracle appears" switches (saved immediately), context.dev key (pre-filled with the default; saving the default removes the stored override), **Test Connection** (tests unsaved form values via the worker), status banner. |
 | `src/welcome/welcome.html/.css` | Post-install tab: no setup needed, link to a sample product, pin tip. |
 
 ### Tooling and tests (`amazon-price-oracle/`)
@@ -232,6 +232,7 @@ deltaPercentMonth <= -4.0  ->  WAIT        >= +4.0  ->  BUY NOW        otherwise
 | `context_dev_api_key` | User override of the context.dev key. Absent means "use the shipped default". |
 | `context_cache` | `{ [ASIN]: { fetchedAt, signals, error? } }`, 24 h TTL, max 200 entries. |
 | `gemini_macro_cache` | Last macro signal, 3 h TTL, reused up to 24 h if Gemini is unreachable (`stale: true`). |
+| `show_product_card`, `show_search_chips` | Options switches. Absent means on; `false` turns that surface off. Content scripts watch `chrome.storage.onChanged` and add or remove the UI live. |
 | `last_analysis`, `analysis_count` | Popup display data. |
 
 Messages (content/popup/options to worker), names in `MSG`:

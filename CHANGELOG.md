@@ -5,6 +5,17 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.2.0 - Controls and accessibility
+
+- Options page has two switches, **Product pages** and **Search results**. They save immediately and apply live
+  on open Amazon tabs (content scripts watch `chrome.storage.onChanged`); a switch that is off also stays off on
+  newly opened pages and costs nothing (no observers, no requests).
+- Search chips are keyboard accessible: Enter or Space expands, Escape collapses, and focus returns to the chip
+  after each re-render. The expanded panel is a labelled region for screen readers.
+- The context.dev chip tooltip shows how old the data is ("fetched 3 h ago").
+- E2E now also covers the switches (live off and on, persistence across new pages) and keyboard use. 24 unit
+  tests and 21 end-to-end checks.
+
 ## 1.1.1 - Reliability
 
 - Fixed a lost-update race in the context.dev cache: analyses finishing at the same time (search pages)

@@ -1,5 +1,8 @@
 /**
- * Messaging helper shared by the content scripts.
+ * Messaging and settings helpers shared by the content scripts.
+ *
+ * `PriceOracle.settings.get(name)` / `.watch(name, cb)` read the on/off switches from the options page
+ * (`productCard`, `searchChips`; absent means on) and report changes live.
  *
  * Exposes `globalThis.PriceOracle.send(message)`, which resolves with the
  * service worker's `data` or rejects with an Error. Compared to a bare
@@ -53,4 +56,27 @@
   }
 
   PO.send = send;
+
+  /** Mirrors STORAGE_KEYS in src/shared/constants.js (content scripts cannot import modules). */
+  const SETTING_KEYS = { productCard: 'show_product_card', searchChips: 'show_search_chips' };
+
+  PO.settings = {
+    async get(name) {
+      try {
+        const stored = await chrome.storage.local.get(SETTING_KEYS[name]);
+        return stored[SETTING_KEYS[name]] !== false;
+      } catch (_err) {
+        return true;
+      }
+    },
+    watch(name, callback) {
+      try {
+        chrome.storage.onChanged.addListener((changes, area) => {
+          if (area === 'local' && SETTING_KEYS[name] in changes) callback(changes[SETTING_KEYS[name]].newValue !== false);
+        });
+      } catch (_err) {
+        /* extension was reloaded; nothing to watch */
+      }
+    }
+  };
 })(globalThis);

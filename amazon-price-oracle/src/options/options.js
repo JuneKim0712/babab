@@ -4,6 +4,11 @@
 import { DEFAULT_CONTEXT_DEV_KEY, MSG, STORAGE_KEYS } from '../shared/constants.js';
 
 const $ = (id) => document.getElementById(id);
+/** Checkbox id -> storage key. Absent in storage means on. */
+const SWITCHES = {
+  'show-product-card': STORAGE_KEYS.SHOW_PRODUCT_CARD,
+  'show-search-chips': STORAGE_KEYS.SHOW_SEARCH_CHIPS
+};
 let bannerTimer = null;
 
 function banner(text, kind) {
@@ -18,6 +23,8 @@ function banner(text, kind) {
 async function load() {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.CONTEXT_KEY);
   $('context-key').value = (stored[STORAGE_KEYS.CONTEXT_KEY] || '').trim() || DEFAULT_CONTEXT_DEV_KEY;
+  const shown = await chrome.storage.local.get(Object.keys(SWITCHES).map((id) => SWITCHES[id]));
+  for (const [id, key] of Object.entries(SWITCHES)) $(id).checked = shown[key] !== false;
 }
 
 async function save(event) {
@@ -81,5 +88,11 @@ $('reset-context').addEventListener('click', () => {
 });
 $('form').addEventListener('submit', (e) => save(e).catch((err) => banner(`Could not save: ${err.message}`, 'err')));
 $('test').addEventListener('click', testConnection);
+for (const [id, key] of Object.entries(SWITCHES)) {
+  $(id).addEventListener('change', async (e) => {
+    await chrome.storage.local.set({ [key]: e.target.checked });
+    banner(e.target.checked ? 'Turned on.' : 'Turned off.', 'ok');
+  });
+}
 
 load();

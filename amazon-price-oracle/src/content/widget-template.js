@@ -153,6 +153,16 @@
       </div>`;
   }
 
+  /** "3 h ago" style age for tooltips. */
+  function ago(ts) {
+    if (!ts) return '';
+    const mins = Math.max(0, Math.round((Date.now() - ts) / 60000));
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.round(mins / 60);
+    return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
+  }
+
   function renderContextChip(context) {
     if (!context) return '';
     if (context.status === 'error') {
@@ -162,7 +172,8 @@
       return '<span class="po-chip warn" title="Quick estimate from page data"><i class="po-dot"></i>context.dev: Not used (quick estimate)</span>';
     }
     const suffix = context.fromCache ? ' (cached)' : '';
-    return `<span class="po-chip" title="${context.signalCount} pricing signals"><i class="po-dot"></i>context.dev: Connected${suffix}</span>`;
+    const fetched = context.fetchedAt ? `, fetched ${ago(context.fetchedAt)}` : '';
+    return `<span class="po-chip" title="${context.signalCount} pricing signals${fetched}"><i class="po-dot"></i>context.dev: Connected${suffix}</span>`;
   }
 
   function renderGeminiStatus(gemini) {
@@ -335,7 +346,7 @@
       : '';
 
     return `
-      <div class="pc-panel">
+      <div class="pc-panel" role="region" aria-label="PriceOracle 30-day price outlook">
         <div class="pc-msg">${escapeHtml(recommendation.message)} <span class="pc-note">(${confidence}% confidence)</span></div>
         <div class="pc-tiers" aria-label="30-day projected price tiers">${cells}</div>
         <div class="pc-note">30-day: ${pct} (${sign}${usd(Math.abs(deltaAmount))}) · ${gemini}</div>

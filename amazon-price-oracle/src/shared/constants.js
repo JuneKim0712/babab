@@ -28,6 +28,8 @@ export const STORAGE_KEYS = Object.freeze({
   CONTEXT_KEY: 'context_dev_api_key',
   CONTEXT_CACHE: 'context_cache',
   MACRO_CACHE: 'gemini_macro_cache',
+  SHOW_PRODUCT_CARD: 'show_product_card',
+  SHOW_SEARCH_CHIPS: 'show_search_chips',
   LAST_ANALYSIS: 'last_analysis',
   ANALYSIS_COUNT: 'analysis_count'
 });

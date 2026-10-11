@@ -286,6 +286,55 @@ try {
     assert.equal(stats.lastGeminiKeyHeader, null);
   });
 
+  await step('options switches add and remove the product card live', async () => {
+    await opts.bringToFront();
+    await opts.click('#show-product-card');
+    await page.waitForFunction(() => !document.getElementById('price-oracle-host'), { timeout: 10000 });
+    await opts.click('#show-product-card');
+    await page.bringToFront();
+    await waitReady(page);
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#price-oracle-host').length), 1);
+  });
+
+  await step('options switch hides search chips live, keeps them off on new pages, and restores them', async () => {
+    await opts.bringToFront();
+    await opts.click('#show-search-chips');
+    const search2 = await browser.newPage();
+    await search2.setViewport({ width: 1280, height: 1000 });
+    await search2.goto(SEARCH, { waitUntil: 'load' });
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.equal(await chipHosts(search2), 0);
+    await opts.bringToFront();
+    await opts.click('#show-search-chips');
+    await search2.bringToFront();
+    await waitChips(search2, 3);
+    await opts.bringToFront();
+    await opts.click('#show-search-chips');
+    await search2.bringToFront();
+    await search2.waitForFunction(() => document.querySelectorAll('[data-price-oracle-chip]').length === 0, { timeout: 10000 });
+    await opts.bringToFront();
+    await opts.click('#show-search-chips');
+    await search2.close();
+    await page.bringToFront();
+  });
+
+  await step('chip is keyboard accessible: Enter expands, Escape collapses', async () => {
+    const search3 = await browser.newPage();
+    await search3.setViewport({ width: 1280, height: 1000 });
+    await search3.goto(SEARCH, { waitUntil: 'load' });
+    await waitChips(search3, 3);
+    const expanded = () => search3.evaluate(() => document.querySelector('[data-price-oracle-chip]').shadowRoot.querySelector('.pc-chip').getAttribute('aria-expanded'));
+    await search3.evaluate(() => document.querySelector('[data-price-oracle-chip]').shadowRoot.querySelector('.pc-chip').focus());
+    await search3.keyboard.press('Enter');
+    await search3.waitForFunction(() => document.querySelector('[data-price-oracle-chip]').shadowRoot.querySelector('.pc-panel'), { timeout: 5000 });
+    assert.equal(await expanded(), 'true');
+    await search3.keyboard.press('Escape');
+    await search3.waitForFunction(() => !document.querySelector('[data-price-oracle-chip]').shadowRoot.querySelector('.pc-panel'), { timeout: 5000 });
+    assert.equal(await expanded(), 'false');
+    await search3.close();
+    await page.bringToFront();
+  });
+
   await step('if Gemini markets is down the card falls back to the heuristic model', async () => {
     stats.marketsDown = true;
     await opts.bringToFront();

@@ -12,7 +12,7 @@
   'use strict';
 
   const PO = root.PriceOracle;
-  if (!PO || !PO.Parser || !PO.Widget || !PO.send) return;
+  if (!PO || !PO.Parser || !PO.Widget || !PO.send || !PO.settings) return;
   if (root.__priceOracleLoaded) return;
   root.__priceOracleLoaded = true;
 
@@ -30,6 +30,7 @@
   let observedNode = null;
   let debounceTimer = null;
   let lastParsed = null;
+  let enabled = false;
 
   function isProductPage() {
     return /\/(?:dp|gp\/product)\//i.test(location.pathname) || Boolean(document.querySelector('#ASIN'));
@@ -139,6 +140,7 @@
   function scheduleRefresh() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
+      if (!enabled) return;
       attachObserver();
       refresh();
     }, DEBOUNCE_MS);
@@ -165,12 +167,31 @@
     observer.observe(target, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['value'] });
   }
 
-  function init() {
-    if (!isProductPage()) return;
+  function enable() {
+    if (enabled) return;
+    enabled = true;
     attachObserver();
     refresh();
+  }
+
+  /** Remove the card and stop watching the page (the "show card" switch was turned off). */
+  function disable() {
+    enabled = false;
+    clearTimeout(debounceTimer);
+    if (observer) observer.disconnect();
+    observer = null;
+    observedNode = null;
+    requestSeq++; // drop any response still in flight
+    signature = '';
+    if (host) host.remove();
+  }
+
+  async function init() {
+    if (!isProductPage()) return;
     window.addEventListener('popstate', scheduleRefresh);
     window.addEventListener('pageshow', scheduleRefresh);
+    PO.settings.watch('productCard', (on) => (on ? enable() : disable()));
+    if (await PO.settings.get('productCard')) enable();
   }
 
   init();

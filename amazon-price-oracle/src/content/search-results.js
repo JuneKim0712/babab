@@ -19,7 +19,7 @@
   'use strict';
 
   const PO = root.PriceOracle;
-  if (!PO || !PO.Parser || !PO.Widget || !PO.send) return;
+  if (!PO || !PO.Parser || !PO.Widget || !PO.send || !PO.settings) return;
   if (!PO.Parser.isSearchPage(location)) return;
   if (root.__priceOracleSearchLoaded) return;
   root.__priceOracleSearchLoaded = true;
@@ -32,13 +32,14 @@
   const VIEWPORT_MARGIN = '400px 0px';
 
   /** @type {WeakMap<Element, CardState>} */
-  const cards = new WeakMap();
+  let cards = new WeakMap();
   const queue = [];
   let active = 0;
   let debounceTimer = null;
   let intersection = null;
   let mutationObserver = null;
   let observedRoot = null;
+  let enabled = false;
 
   /**
    * @typedef {Object} CardState
@@ -85,6 +86,13 @@
     /** @type {CardState} */
     const state = { host, shadow, signature, product, view: { status: 'loading' }, seq: 0, queued: false };
     shadow.addEventListener('click', (event) => onClick(card, state, event));
+    shadow.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && state.view.expanded) {
+        state.view = { ...state.view, expanded: false };
+        paint(state);
+        shadow.querySelector('.pc-chip')?.focus();
+      }
+    });
     cards.set(card, state);
     return state;
   }
@@ -146,6 +154,11 @@
     pump();
   }
 
+  /** Re-rendering replaces the button, so hand keyboard focus back to the new one. */
+  function focusChip(state) {
+    state.shadow.querySelector('.pc-chip')?.focus({ preventScroll: true });
+  }
+
   function onClick(card, state, event) {
     const target = event.target instanceof Element ? event.target.closest('[data-action]') : null;
     if (!target) return;
@@ -155,6 +168,7 @@
     if (action === 'toggle' && state.view.status === 'ready') {
       state.view = { ...state.view, expanded: !state.view.expanded };
       paint(state);
+      focusChip(state);
     } else if (action === 'retry') {
       enqueue(state);
     } else if (action === 'deep' && !state.view.deepLoading) {
@@ -219,6 +233,7 @@
   function scheduleScan() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
+      if (!enabled) return;
       attachObserver();
       scan();
     }, DEBOUNCE_MS);
@@ -249,12 +264,33 @@
     mutationObserver.observe(target, { childList: true, subtree: true });
   }
 
-  function init() {
+  function enable() {
+    if (enabled) return;
+    enabled = true;
     ensureIntersection();
     attachObserver();
     scan();
+  }
+
+  /** Remove every chip and stop watching the page (the "show chips" switch was turned off). */
+  function disable() {
+    enabled = false;
+    clearTimeout(debounceTimer);
+    if (mutationObserver) mutationObserver.disconnect();
+    mutationObserver = null;
+    observedRoot = null;
+    if (intersection) intersection.disconnect();
+    intersection = null;
+    queue.length = 0;
+    cards = new WeakMap(); // pending responses then paint into detached hosts
+    document.querySelectorAll(`[${HOST_ATTR}]`).forEach((el) => el.remove());
+  }
+
+  async function init() {
     window.addEventListener('popstate', scheduleScan);
     window.addEventListener('pageshow', scheduleScan);
+    PO.settings.watch('searchChips', (on) => (on ? enable() : disable()));
+    if (await PO.settings.get('searchChips')) enable();
   }
 
   init();
