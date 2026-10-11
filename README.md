@@ -1,6 +1,6 @@
 # PriceOracle — Amazon Buy Timing & Price Projection (Chrome extension)
 
-PriceOracle is a Manifest V3 Chrome extension that injects a **Buy Timing & 30-day Price Projection** card under the price on Amazon product pages (`amazon.com`). It answers one question: *should I buy this now, or wait?*
+PriceOracle is a Manifest V3 Chrome extension that injects a **Buy Timing & 30-day Price Projection** card under the price on Amazon product pages (`amazon.com`) and a compact verdict chip on every result of Amazon search pages (`amazon.com/s?k=...`). It answers one question: *should I buy this now, or wait?*
 
 ```
 ⚡ PRICE TIMING ORACLE                         [● context.dev: Connected]
@@ -55,7 +55,7 @@ Notes:
 
 ## Purpose and scope
 
-**Goal:** give a shopper a fast, honest, in-page signal on timing: WAIT (price expected to fall at least 4% in 30 days), BUY NOW (expected to rise at least 4%), or FAIR PRICE (stable), plus a five-tier distribution of plausible 30-day prices and a pin showing where today's price sits.
+**Goal:** give a shopper a fast, honest, in-page signal on timing, on product pages (full card) and search results (compact chip, expandable): WAIT (price expected to fall at least 4% in 30 days), BUY NOW (expected to rise at least 4%), or FAIR PRICE (stable), plus a five-tier distribution of plausible 30-day prices and a pin showing where today's price sits.
 
 **What it is:** a client-side extension. All logic runs in the browser; the only network calls are from the background service worker to context.dev and Gemini.
 
@@ -90,7 +90,7 @@ Design goals, in priority order:
  welcome (post-install tab)
 ```
 
-Request flow for one product page:
+Request flow for one product page (search pages are described after it):
 1. `content.js` parses the page (`PriceOracle.Parser.parseProduct`): ASIN, price, list price, category, title.
 2. It sends `PO_ANALYZE_PRODUCT` to the service worker and paints a loading skeleton.
 3. The worker (`runPipeline` in `service-worker.js`):
@@ -101,8 +101,15 @@ Request flow for one product page:
    5. The result is stored as `last_analysis` for the popup and returned to the page.
 4. `content.js` renders the card into the Shadow DOM. A `MutationObserver` re-runs the flow when the ASIN or price changes (colour/size variant) without a page reload.
 
+Request flow for a search-results page (`search-results.js`):
+1. `PriceOracle.Parser.getSearchCards` finds `div[data-component-type="s-search-result"][data-asin]`; `parseSearchCard` reads ASIN, price, list price, title and rating from each card. Cards without a price ("See options") get no chip. The category comes from the department dropdown, else the `i=` URL parameter, else the sub-nav.
+2. A Shadow DOM chip host (`[data-price-oracle-chip]`) is inserted after the card's price row. Cards are analysed lazily as they near the viewport (`IntersectionObserver`), at most 4 at a time.
+3. Each card sends `PO_ANALYZE_PRODUCT` with `light: true`. Light mode **never calls context.dev** (it only reuses the 24 h cache, status `skipped` otherwise), so a page of 60 results costs zero credits. The Gemini macro lookup is shared across all cards (in-flight de-duplication plus the 3 h cache). Light results are not written to `last_analysis`.
+4. Clicking a chip expands the five tiers. For a quick estimate the panel offers **Deep analysis**, which re-sends the request with `light: false` (one context.dev scrape for that product).
+5. A debounced `MutationObserver` on the results grid adds chips to lazily loaded cards and re-renders a card when its price changes.
+
 Key properties:
-- **Content scripts are classic scripts**, not modules (Chrome does not allow ES modules in `content_scripts`). They share state through `globalThis.PriceOracle`. Order in `manifest.json` matters: parser, template, content.
+- **Content scripts are classic scripts**, not modules (Chrome does not allow ES modules in `content_scripts`). They share state through `globalThis.PriceOracle`. Order in `manifest.json` matters: parser, template, search-results, content.
 - **The service worker is an ES module** (`"type": "module"`) so background files `import` each other and `src/shared/constants.js`.
 - **No CORS issues:** pages never call external APIs; only the worker does, using `host_permissions`.
 - **No inline scripts** anywhere (MV3 CSP). Popup, options and welcome load `type="module"` files.
@@ -132,17 +139,18 @@ Key properties:
 
 | File | Role |
 | --- | --- |
-| `manifest.json` | MV3 manifest. Permissions: `storage`, `scripting`. Host permissions: `api.context.dev`, `api.gemini.com`, `www.amazon.com`, `amazon.com`. Declares the service worker (module), the three content scripts (in order), popup, options page (`open_in_tab`), icons. **`version` here is the release version.** |
+| `manifest.json` | MV3 manifest. Permissions: `storage`, `scripting`. Host permissions: `api.context.dev`, `api.gemini.com`, `www.amazon.com`, `amazon.com`. Declares the service worker (module), the four content scripts (in order), popup, options page (`open_in_tab`), icons. **`version` here is the release version.** |
 | `src/shared/constants.js` | Single source of truth for endpoints, the default context.dev key, storage keys, cache TTLs and message type names. Imported by the worker, popup and options. Content scripts cannot import it, so `content.js` mirrors the one message name it needs. |
 | `src/background/service-worker.js` | Message router (`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`), the analysis pipeline, in-flight request de-duplication, `last_analysis` bookkeeping, and the `onInstalled` handler (opens the welcome tab and injects content scripts into already-open Amazon tabs). Always replies `{ok, data}` or `{ok:false, error}`. |
 | `src/background/context-dev.js` | context.dev client. Calls `POST /v1/web/scrape` with `formats {json, markdown}` and a pricing JSON schema. `unwrapScrapeResponse` flattens the API's `{requested, success, data}` wrappers; `extractSignals` + `signalsFromMarkdown` turn the output into normalised signals (list price, current price, low/avg/high, discount %, rating, reviews, bought-past-month, category, availability). 24 h cache per ASIN (15 min negative cache for errors). `testContextDevConnection` uses a free endpoint. |
 | `src/background/gemini-prediction.js` | Two parts. (1) **Gemini prediction markets** client: fetches Economics events, `contractProbability`, `computeMacroSignal` (Fed hike/cut odds + recession odds to a sentiment multiplier and discount boost), `blendMacro`, 3 h cache with stale fallback. (2) **Heuristic model** `simulatePrediction`: deterministic, seeded by ASIN and ISO week; mean reversion vs typical/list price, seasonal sale calendar (`findSeasonalEvent`), category sale proneness. Always available as the fallback. |
 | `src/background/projection-engine.js` | Pure functions, no `chrome.*`. `estimateVolatility`, `computeProjection`, `buildRecommendation`, `computeConfidence`, `formatUsd`. Contains the spec formulas (see below). |
-| `src/content/amazon-parser.js` | `PriceOracle.Parser`: ASIN (`#ASIN`, URL regex fallback), price (multiple selector fallbacks, `.a-offscreen` and whole/fraction), list price, category (breadcrumb, dropdown, nav), title, rating; `parseProduct()` returns null on non-product pages or when no price is present. |
-| `src/content/widget-template.js` | `PriceOracle.Widget.render(state)`: returns the Shadow DOM HTML plus the isolated CSS for loading / error / ready states, the pill badges, the five-tier range bar and pin (`pinPosition` interpolates between tiers). Re-asserts inheritable CSS properties on the card because the host element lives in Amazon's DOM. |
+| `src/content/amazon-parser.js` | `PriceOracle.Parser`: ASIN (`#ASIN`, URL regex fallback), price (multiple selector fallbacks, `.a-offscreen` and whole/fraction), list price, category (breadcrumb, dropdown, nav), title, rating; `parseProduct()` returns null on non-product pages or when no price is present. Search helpers: `isSearchPage`, `getSearchCategory`, `getSearchCards`, `parseSearchCard`. |
+| `src/content/widget-template.js` | `PriceOracle.Widget.render(state)`: returns the Shadow DOM HTML plus the isolated CSS for loading / error / ready states, the pill badges, the five-tier range bar and pin (`pinPosition` interpolates between tiers). `renderChip(state)` renders the compact search-result chip and its expandable panel. Re-asserts inheritable CSS properties on the card because the host element lives in Amazon's DOM. |
 | `src/content/content.js` | Entry point. Finds the anchor (after `#corePriceDisplay_desktop_feature_div`, else top of `#buybox`, else other price containers), creates one Shadow DOM host (`#price-oracle-host`), sends analysis requests, ignores stale responses (request sequence counter), observes the product container with a debounced `MutationObserver`, re-attaches the host if Amazon re-renders the DOM. |
-| `src/popup/popup.html/.css/.js` | Toolbar popup: last analysed product, counters, key status badges, optional Gemini key modal, clear-cache button. |
-| `src/options/options.html/.css/.js` | Settings page: context.dev key (pre-filled with the default; saving the default removes the stored override), optional Gemini key, **Test Connection** (tests unsaved form values via the worker), status banner. |
+| `src/content/search-results.js` | Search-page entry point (runs only on `/s` URLs): chip placement, lazy analysis queue (concurrency 4), chip click handling (expand, retry, deep analysis), observers for lazily loaded cards. |
+| `src/popup/popup.html/.css/.js` | Toolbar popup: last analysed product, counters, connection status badges, clear-cache button. |
+| `src/options/options.html/.css/.js` | Settings page: context.dev key (pre-filled with the default; saving the default removes the stored override), **Test Connection** (tests unsaved form values via the worker), status banner. |
 | `src/welcome/welcome.html/.css` | Post-install tab: no setup needed, link to a sample product, pin tip. |
 
 ### Tooling and tests (`amazon-price-oracle/`)
@@ -155,6 +163,7 @@ Key properties:
 | `tests/engine.test.mjs` | Unit tests (Node `node:test`): projection formulas, tier ordering, thresholds, signal extraction, scrape-response unwrapping, macro signal, heuristic determinism and bounds, seasonal calendar. |
 | `tests/e2e.mjs` | End-to-end test in a real Chrome: loads the unpacked extension, drives a mock Amazon page with mock context.dev and mock Gemini. Run against the shipped zip with `EXT_DIR`. |
 | `test-page/amazon-product.html` | Mock Amazon product page with hostile CSS (proves Shadow DOM isolation) and variant buttons (proves re-render). |
+| `test-page/amazon-search.html` | Mock search-results page (cards with and without prices, hostile CSS, a button that lazily appends a card). |
 | `test-page/serve.mjs` | HTTPS mock server for `www.amazon.com`, `api.context.dev`, `api.gemini.com` (self-signed cert); also usable standalone via `npm run demo`. |
 
 ---
@@ -205,7 +214,7 @@ deltaPercentMonth <= -4.0  ->  WAIT        >= +4.0  ->  BUY NOW        otherwise
 ### Gemini prediction markets (macro odds)
 - Docs: <https://developer.gemini.com/prediction-markets-spec/markets>.
 - Endpoint used: `GET https://api.gemini.com/v1/prediction-markets/events?status=active&category=Economics&limit=50`. Also `GET .../categories` for Test Connection.
-- **Public, no key required.** An optional key is sent as `X-GEMINI-APIKEY`; public endpoints ignore it today.
+- **Public, no key required.** There is no Gemini key anywhere in the extension. `onInstalled` deletes a `gemini_api_key` left behind by v1.0.x.
 - Contract prices are strings in `[0,1]` and are probabilities. `contractProbability` uses the bid/ask midpoint, else the last trade, else null (illiquid contracts often have no quotes).
 - Events used: the next `FED<yymmdd>` market (labels like "Hike 25bps", "Cut 25bps", "Fed maintains rate") and the `RECESSION*` market ("Yes").
 - There are no Amazon or product markets. Other categories (Commodities, Politics, Sports, Crypto) are unused.
@@ -219,7 +228,6 @@ deltaPercentMonth <= -4.0  ->  WAIT        >= +4.0  ->  BUY NOW        otherwise
 | Key | Content |
 | --- | --- |
 | `context_dev_api_key` | User override of the context.dev key. Absent means "use the shipped default". |
-| `gemini_api_key` | Optional Gemini key. |
 | `context_cache` | `{ [ASIN]: { fetchedAt, signals, error? } }`, 24 h TTL, max 200 entries. |
 | `gemini_macro_cache` | Last macro signal, 3 h TTL, reused up to 24 h if Gemini is unreachable (`stale: true`). |
 | `last_analysis`, `analysis_count` | Popup display data. |
@@ -227,9 +235,9 @@ deltaPercentMonth <= -4.0  ->  WAIT        >= +4.0  ->  BUY NOW        otherwise
 Messages (content/popup/options to worker), names in `MSG`:
 `PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`. Every response is `{ok:true,data}` or `{ok:false,error}`.
 
-Result contract returned by `PO_ANALYZE_PRODUCT`: `{ asin, title, projection: {currentPrice, volatility, projectedMid, deltaPercentMonth, deltaAmount, tiers:{lowest,low,mid,high,highest}, recommendation:{action,label,message}, confidence}, meta: {context:{status,fromCache,fetchedAt,signalCount,error}, gemini:{status,isSimulated,source,rationale,summary,stale,sentimentMultiplier,discountProbability,error}} }`. The widget, popup and tests all depend on this shape; change it in one commit across all of them.
+Request payload extras: `forceRefresh` (product page retry) and `light` (search results, no context.dev calls). Result contract returned by `PO_ANALYZE_PRODUCT`: `{ asin, title, light, projection: {currentPrice, volatility, projectedMid, deltaPercentMonth, deltaAmount, tiers:{lowest,low,mid,high,highest}, recommendation:{action,label,message}, confidence}, meta: {context:{status,fromCache,fetchedAt,signalCount,error}, gemini:{status,isSimulated,source,rationale,summary,stale,sentimentMultiplier,discountProbability,error}} }`. The widget, popup and tests all depend on this shape; change it in one commit across all of them.
 
-Settings UX: the default context.dev key is pre-filled in Options; saving it unchanged deletes the override. The Gemini key is optional everywhere (Options and the popup modal). Saving keys clears the macro cache.
+Settings UX: the default context.dev key is pre-filled in Options; saving it unchanged deletes the override. Saving settings clears the macro cache.
 
 ---
 
@@ -317,7 +325,7 @@ Current release: `v1.0.0`.
 | Topic | Brief | What was built, and why |
 | --- | --- | --- |
 | context.dev endpoint | `POST /v1/extract`, `formats: ["json","markdown"]` | That path returns `ENDPOINT_NOT_FOUND`. Uses `POST /v1/web/scrape` with `formats: {json, markdown}` and a pricing `jsonParams.schema`, same Bearer auth. |
-| Gemini | "gemini.com / Prediction" with an API key and a simulated fallback | Uses the Gemini prediction-markets API. Its market data is public, so no key is required and it is live out of the box; the key is optional and sent as `X-GEMINI-APIKEY`. The heuristic model remains the fallback and still runs when the API is unreachable. |
+| Gemini | "gemini.com / Prediction" with an API key and a simulated fallback | Uses the Gemini prediction-markets API. Its market data is public, so no key is needed and it is live out of the box (v1.1 removed the optional key field entirely). The heuristic model remains the fallback and still runs when the API is unreachable. |
 | Projection formula | `projectedMid = P*(1+(s-1)*v*(1-dp))` | Adds an optional additive `priceDrift` (default 0 reproduces the formula) because the base term cannot reach the +/-4% thresholds. |
 | Confidence | "82%" in the mock | Derived heuristically (see above), capped at 82% heuristic-only, 88% with Gemini. |
 | Example ASIN | `B0CX23V258` | Returns HTTP 404 from Amazon today. `B09B8V1LZ3` works and is used in docs/samples. |
@@ -341,7 +349,8 @@ Current release: `v1.0.0`.
 - Amazon US only (`amazon.com`); prices are formatted as USD.
 - No real price history. Ideas: integrate a price-history source, or store the user's own observations per ASIN over time in `chrome.storage.local` to build a local history.
 - The product forecast is a heuristic model. Ideas: calibrate coefficients against collected history; add more Gemini markets (commodities, sector indices) as category-specific signals.
-- Selectors target the desktop product page; mobile layout and some Amazon A/B variants may not match. Add fallbacks in `amazon-parser.js`.
+- Search chips need a visible price on the card; cards that only say "See options" get none. Search chips use cached context.dev data only (no credits) until the user asks for a deep analysis.
+- Selectors target the desktop product page and the standard search grid; mobile layout and some Amazon A/B variants may not match. Add fallbacks in `amazon-parser.js`.
 - Variant changes are detected through the DOM mutation of the price and `#ASIN`; exotic flows (quick view modals) are not handled.
 - No Chrome Web Store listing yet (would need packaging, a privacy policy and key handling for the default key).
 - Possible UX: price alerts, options for threshold percentage, localisation, dark mode.

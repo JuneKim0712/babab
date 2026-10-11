@@ -1,6 +1,6 @@
 # PriceOracle user guide
 
-PriceOracle adds a small card under the price on Amazon product pages that tells you whether to **buy now or wait**. This guide shows how to install it in your own Chrome, use it, and remove it. You don't need an account or an API key, and you don't need to know how to code.
+PriceOracle adds a small card under the price on Amazon product pages, and a small chip on every search result, that tells you whether to **buy now or wait**. This guide shows how to install it in your own Chrome, use it, and remove it. You don't need an account or an API key, and you don't need to know how to code.
 
 Works in Google Chrome on Windows, macOS, Linux and ChromeOS, and in other Chromium browsers (Microsoft Edge, Brave, Opera, Vivaldi). It does not work on phones or in Safari and Firefox.
 
@@ -67,10 +67,15 @@ The image below uses a made-up product page, so you can see the layout:
 | **context.dev chip** (top right) | Green means product data was fetched. Amber means it couldn't be, and the card is using only what is on the page. |
 | **Gemini Status** | Green means live Fed-decision and recession odds from Gemini prediction markets were blended in. Amber means they were unreachable and the card used its built-in model alone. |
 
+### Search results
+
+![Chips on Amazon search results](images/06-search-results.png)
+
 ### Good to know
 
 - The projection is an estimate from a model, not a promise. Amazon pages don't publish price history, so treat it as one input to your decision, not financial advice.
-- It only runs on amazon.com product pages. It does nothing on search results, the cart, or other sites.
+- It runs on amazon.com product pages and search results. It does nothing in the cart or on other sites.
+- On search results, each product with a visible price gets a chip such as **BUY NOW +3.2% / 30d**. Click the chip to see the five price tiers. Chips are a quick estimate from the price on the card; click **Deep analysis** inside a chip to fetch the product's page data (this is the only search action that uses context.dev). Open the product for the full card.
 - A product that is unavailable or has no price shows no card.
 
 ## 3. The toolbar popup
@@ -84,8 +89,7 @@ Click the PriceOracle icon to see the last product you looked at, how many analy
 You don't need to change anything. To open settings, right-click the PriceOracle icon and choose **Options**, or click the gear in the popup.
 
 - **context.dev API key:** a working key is already filled in. Replace it with your own if you have one. **Reset to default** puts the built-in key back.
-- **Gemini API key (optional):** Gemini's market data is public, so no key is needed. Paste one only if you want it stored.
-- **Test Connection:** checks that both services are reachable and that your keys are accepted, without using any credits.
+- **Test Connection:** checks that both services are reachable and that your key is accepted, without using any credits.
 - Click **Save** to keep changes.
 
 ![Settings page](images/02-options.png)
@@ -105,8 +109,8 @@ Open `chrome://extensions`, find PriceOracle, click **Remove**, and confirm. You
 ## 7. Privacy
 
 - Everything runs in your browser. There is no PriceOracle server, no account, no analytics and no tracking.
-- When you view a product, the extension sends that product's Amazon link to **context.dev** to read its pricing details, and asks **Gemini's public prediction-market API** for macro odds. Neither request contains anything about you.
-- Any API key you enter stays in your browser's local extension storage.
+- When you view a product or click **Deep analysis** on a search chip, the extension sends that product's Amazon link to **context.dev** to read its pricing details, and asks **Gemini's public prediction-market API** for macro odds. Neither request contains anything about you.
+- Your context.dev key (the built-in one, or yours if you replace it) stays in your browser's local extension storage.
 - Chrome will say the extension can "read and change data on amazon.com". That is required to draw the card on the page. It does not read other sites.
 
 ## 8. Troubleshooting
@@ -115,7 +119,7 @@ Open `chrome://extensions`, find PriceOracle, click **Remove**, and confirm. You
 | --- | --- |
 | **I can't find "Load unpacked"** | Turn on **Developer mode** (top right of `chrome://extensions`). |
 | **"Manifest file is missing or unreadable"** | You selected the wrong folder. Pick the one that directly contains `manifest.json`, not its parent. |
-| **No card appears** | Make sure it is an amazon.com product page (the address contains `/dp/`) and that the item shows a price. Then reload the extension (`chrome://extensions`, reload arrow) and reload the page. |
+| **No card appears** | Make sure it is an amazon.com product page (the address contains `/dp/`) or a search results page (`/s?k=...`), and that the item shows a price. Search results without a price ("See options") get no chip. Then reload the extension (`chrome://extensions`, reload arrow) and reload the page. |
 | **The card says "Couldn't build a projection"** | Click **Retry**. If it keeps failing, open Settings and run **Test Connection**. |
 | **context.dev chip is amber** | The product data service returned an error for this item. The card still works from page data. Try again later or check your key in Settings. |
 | **Gemini chip is amber** | The market-odds service was unreachable. The card falls back to its built-in model. |
