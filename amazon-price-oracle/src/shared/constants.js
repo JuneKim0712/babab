@@ -35,7 +35,9 @@ export const STORAGE_KEYS = Object.freeze({
   CONTEXT_PAUSE: 'context_pause',
   LAST_ANALYSIS: 'last_analysis',
   RECENT_ANALYSES: 'recent_analyses',
-  ANALYSIS_COUNT: 'analysis_count'
+  ANALYSIS_COUNT: 'analysis_count',
+  SITE_URL: 'site_url',
+  SITE_SESSION: 'site_session'
 });
 
 /** context.dev responses are cached per ASIN for 24 hours to preserve credits. */
@@ -60,5 +62,22 @@ export const MSG = Object.freeze({
   TEST_CONNECTION: 'PO_TEST_CONNECTION',
   OPEN_OPTIONS: 'PO_OPEN_OPTIONS',
   CLEAR_CACHE: 'PO_CLEAR_CACHE',
-  CLEAR_HISTORY: 'PO_CLEAR_HISTORY'
+  CLEAR_HISTORY: 'PO_CLEAR_HISTORY',
+  SITE_STATUS: 'PO_SITE_STATUS',
+  SITE_CONNECT: 'PO_SITE_CONNECT',
+  SITE_DISCONNECT: 'PO_SITE_DISCONNECT',
+  ALERT_STATE: 'PO_ALERT_STATE',
+  ALERT_SET: 'PO_ALERT_SET',
+  ALERT_REMOVE: 'PO_ALERT_REMOVE'
 });
+
+/**
+ * Website integration: the PriceOracle website owns Google sign-in and price alerts.
+ * The address is entered in Settings (there is no sensible shared default). The API the
+ * website must expose is specified in docs/WEBSITE_INTEGRATION.md.
+ */
+export const DEFAULT_SITE_URL = '';
+/** Give up on a website request after this long so a card never hangs. */
+export const SITE_REQUEST_TIMEOUT_MS = 15000;
+/** The sign-in window is closed by Chrome when the website redirects here. */
+export const SITE_CONNECT_PATH = '/extension/connect';

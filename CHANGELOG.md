@@ -5,6 +5,28 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.6.0 - Google sign-in and price alerts via the website
+
+The projection, thresholds, inputs and fallbacks are unchanged. Everything new is optional and invisible until
+a website address is entered in Settings. The website side is specified in
+[docs/WEBSITE_INTEGRATION.md](docs/WEBSITE_INTEGRATION.md).
+
+- Settings: new "Website and price alerts" panel. **Sign in with Google** opens the website's sign-in bridge in
+  a Chrome auth window (`chrome.identity.launchWebAuthFlow`); the website does the Google sign-in and hands back
+  its own token. The extension needs no Google client ID and never sees a Google credential.
+- Product card: new **Price alert** section. Set a target price (pre-filled with a sensible suggestion), update
+  it, **Turn off** / **Turn on**, or **Remove**. Alerts are stored on the website (one per user and item), so the
+  website sees them too. Shows **Target reached** when an active alert's target is at or above the price on screen.
+- Clear states for every case: website not connected, signed out or expired, request error, website without
+  CORS, busy, and invalid targets (must be above $0 and below today's price).
+- Typing in the target field no longer triggers Amazon keyboard shortcuts; Enter saves.
+- Popup: "Website alerts" row with the signed-in account and active alert count.
+- Open product pages update immediately after signing in or out from Settings.
+- New `identity` permission (no install warning). No host permission for the website: it must send CORS headers.
+- The token is kept in `chrome.storage.local`, sent only to the configured website origin, dropped on any 401.
+- Mock website in `test-page/serve.mjs`; 13 new e2e steps; new unit tests for the pure helpers and the card
+  section; guards for mirrored message names and the permission list.
+
 ## 1.5.0 - "Ledger" visual redesign
 
 Design only. The projection maths, thresholds, inputs and fallbacks are unchanged. Full palette and

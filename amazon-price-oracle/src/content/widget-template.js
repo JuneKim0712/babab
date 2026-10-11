@@ -71,6 +71,9 @@
       border-radius: 4px; background: var(--po-teal-tint); color: var(--po-teal-deep); white-space: nowrap; }
     .po-chip .po-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--po-teal); }
     .po-chip.warn { background: var(--po-caution-tint); color: var(--po-caution); }
+    .po-chip.ok { background: var(--po-buy-tint); color: var(--po-buy); }
+    .po-chip.ok .po-dot { background: var(--po-buy); }
+    .po-label .po-icon { vertical-align: -3px; margin-right: 4px; color: var(--po-teal); }
     .po-chip.warn .po-dot { background: var(--po-caution); }
 
     .po-label { font-size: 13px; font-weight: 700; color: var(--po-ink); margin-bottom: 8px; }
@@ -120,6 +123,22 @@
 
     .po-skel { border-radius: 4px; background: var(--po-fair-tint); animation: po-pulse 1.4s ease-in-out infinite; }
     @keyframes po-pulse { 50% { opacity: 0.5; } }
+    .po-alert { display: grid; gap: 8px; }
+    .po-alert-text { font-size: 13px; color: var(--po-graphite); }
+    .po-alert-text strong { color: var(--po-ink); }
+    .po-alert-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+    .po-alert-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .po-money { display: inline-flex; align-items: center; border: 1px solid var(--po-rule-strong); border-radius: 4px; background: var(--po-paper); padding: 0 8px; }
+    .po-money:focus-within { border-color: var(--po-teal); outline: 2px solid var(--po-teal-range); }
+    .po-money span { color: var(--po-graphite); font-size: 13px; }
+    .po-input { font: inherit; font-size: 14px; font-weight: 700; color: var(--po-ink); width: 84px; border: 0; outline: 0; background: transparent; padding: 5px 0 5px 3px; }
+    .po-btn.primary { background: var(--po-teal); border-color: var(--po-teal); color: #fff; }
+    .po-btn.primary:hover { background: var(--po-teal-deep); border-color: var(--po-teal-deep); }
+    .po-btn:disabled { opacity: 0.6; cursor: progress; }
+    .po-link { font: inherit; font-size: 13px; background: none; border: 0; padding: 4px 2px; color: var(--po-teal); cursor: pointer; text-decoration: underline; }
+    .po-link:hover { color: var(--po-teal-deep); }
+    .po-link:disabled { opacity: 0.6; cursor: progress; }
+    .po-alert-error { font-size: 13px; color: var(--po-wait); }
     .po-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: var(--po-caution-tint); color: var(--po-caution); }
     @media (prefers-reduced-motion: reduce) { .po-skel { animation: none; } }
     @container (max-width: 380px) {
@@ -233,7 +252,71 @@
     return text ? `<div class="po-row"><span class="po-key">Your price history</span><span class="po-val">${escapeHtml(text)}</span></div>` : '';
   }
 
-  function renderReady({ projection, meta }) {
+
+  const ALERT_ICON =
+    '<svg class="po-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5a3.5 3.5 0 0 0-3.5 3.5c0 3-1.5 4-1.5 4h10s-1.5-1-1.5-4A3.5 3.5 0 0 0 8 2.5z"/><path d="M6.6 12.5a1.5 1.5 0 0 0 2.8 0"/></svg>';
+
+  /**
+   * Price-alert section of the product card. `alert` is the content script's view of the website link:
+   * {phase: 'loading'|'not_configured'|'signed_out'|'ready'|'error', alert?, email?, suggested?, busy?, error?, expired?}
+   * Returns '' when absent (older callers, search chips).
+   */
+  function renderAlert(a, currentPrice) {
+    if (!a) return '';
+    const head = `<div class="po-label">${ALERT_ICON} Price alert</div>`;
+    const disabled = a.busy ? ' disabled' : '';
+    const err = a.error ? `<div class="po-alert-error" role="alert">${escapeHtml(a.error)}</div>` : '';
+    let body;
+    switch (a.phase) {
+      case 'loading':
+        body = '<div class="po-alert-text">Checking your alerts…</div>';
+        break;
+      case 'not_configured':
+        body = `<div class="po-alert-text">Get notified when this item hits your target price. Connect your PriceOracle website in settings.</div>
+          <div><button class="po-btn" type="button" data-action="alert-connect">Set up alerts</button></div>`;
+        break;
+      case 'signed_out':
+        body = `<div class="po-alert-text">${a.expired ? 'Your sign-in expired. ' : ''}Sign in with Google to set a price alert for this item.</div>
+          <div><button class="po-btn primary" type="button" data-action="alert-connect">Sign in with Google</button></div>`;
+        break;
+      case 'error':
+        body = `<div class="po-alert-error" role="alert">Price alerts are unavailable: ${escapeHtml(a.error || 'unknown error')}</div>
+          <div><button class="po-btn" type="button" data-action="alert-retry">Retry</button></div>`;
+        break;
+      default: {
+        const existing = a.alert;
+        const value = a.draft !== undefined ? a.draft : Number(existing ? existing.targetPrice : a.suggested).toFixed(2);
+        const field = `<span class="po-money"><span aria-hidden="true">$</span><input class="po-input" type="text" inputmode="decimal" autocomplete="off" data-field="alert-target" aria-label="Target price in US dollars" value="${escapeHtml(value)}"${disabled} /></span>`;
+        if (!existing) {
+          body = `<div class="po-alert-text">Alert me when the price is at or below:</div>
+            <div class="po-alert-form">${field}<button class="po-btn primary" type="button" data-action="alert-save"${disabled}>Set alert</button></div>${err}`;
+        } else {
+          const reached = existing.enabled && currentPrice <= existing.targetPrice;
+          const label = reached ? 'Target reached' : existing.enabled ? 'Alert on' : 'Alert paused';
+          const detail = existing.enabled
+            ? `notifying at or below <strong>${usd(existing.targetPrice)}</strong>`
+            : `would notify at or below <strong>${usd(existing.targetPrice)}</strong>`;
+          body = `<div class="po-alert-status"><span class="po-chip ${reached ? 'ok' : existing.enabled ? '' : 'warn'}"><i class="po-dot"></i>${label}</span><span class="po-alert-text">${detail}</span></div>
+            <div class="po-alert-form">${field}
+              <button class="po-btn" type="button" data-action="alert-save"${disabled}>Update</button>
+              <button class="po-btn" type="button" data-action="alert-toggle"${disabled}>${existing.enabled ? 'Turn off' : 'Turn on'}</button>
+              <button class="po-link" type="button" data-action="alert-remove"${disabled}>Remove</button>
+            </div>${err}`;
+        }
+        if (a.email) body += `<div class="po-note">Signed in as ${escapeHtml(a.email)} · <button class="po-link" type="button" data-action="alert-connect">Account settings</button></div>`;
+      }
+    }
+    return `<div class="po-section po-alert" data-phase="${escapeHtml(a.phase)}">${head}${body}</div>`;
+  }
+
+  /** Default target to pre-fill: the lower of the LOW tier and 5% under the current price. */
+  function suggestTarget(currentPrice, lowTier) {
+    const five = currentPrice * 0.95;
+    const pick = Number.isFinite(lowTier) && lowTier > 0 ? Math.min(lowTier, five) : five;
+    return Math.max(0.01, Math.floor(pick * 100) / 100);
+  }
+
+  function renderReady({ projection, meta }, alertState) {
     const { tiers, recommendation, deltaPercentMonth, deltaAmount, currentPrice, confidence } = projection;
     const values = TIER_ORDER.map(([key]) => tiers[key]);
     const pin = pinPosition(currentPrice, values);
@@ -278,6 +361,7 @@
           <span class="po-pin-label${edgeClass}" style="left:${pin.toFixed(1)}%">Current: ${usd(currentPrice)}</span>
         </div>
       </div>
+      ${renderAlert(alertState, currentPrice)}
       <div class="po-section po-foot">
         <div class="po-row"><span class="po-key">30-day delta</span><span class="po-val"><span class="po-delta ${dir}">${arrow} ${pct} (${expected})</span></span></div>
         <div class="po-row"><span class="po-key">Gemini status</span><span class="po-val">${renderGeminiStatus(meta.gemini)}</span></div>
@@ -312,7 +396,7 @@
   function renderCard(state) {
     switch (state.status) {
       case 'ready':
-        return renderReady(state.data);
+        return renderReady(state.data, state.alert);
       case 'error':
         return renderError(state.error);
       default:
@@ -432,5 +516,5 @@
     return `<style>${CHIP_STYLES}</style><div class="pc-wrap">${chip}${panel}</div>`;
   }
 
-  PO.Widget = { TOKENS, STYLES, CHIP_STYLES, render, renderChip, pinPosition };
+  PO.Widget = { TOKENS, STYLES, CHIP_STYLES, render, renderChip, pinPosition, suggestTarget };
 })(globalThis);

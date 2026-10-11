@@ -29,6 +29,18 @@
       </label>
     </section>
 
+    <section class="panel" aria-labelledby="site-title">
+      <h2 id="site-title">Website and price alerts</h2>
+      <p class="help">Connect your PriceOracle website to set a price alert on any product page. You sign in with Google on the website; this extension never sees your Google password and only keeps the website's own access token, on this device.</p>
+      <label for="site-url">Website address</label>
+      <div class="field">
+        <input id="site-url" type="url" spellcheck="false" autocomplete="off" placeholder="https://your-priceoracle-site.example" />
+        <button type="button" id="site-connect" class="btn primary">Sign in with Google</button>
+        <button type="button" id="site-disconnect" class="btn ghost" hidden>Sign out</button>
+      </div>
+      <p id="site-state" class="state" role="status"></p>
+    </section>
+
     <form id="form" autocomplete="off">
       <section class="panel">
         <h2>context.dev API key</h2>

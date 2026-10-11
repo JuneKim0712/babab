@@ -59,6 +59,8 @@ Notes:
 
 **What it is:** a client-side extension. All logic runs in the browser; the only network calls are from the background service worker to context.dev and Gemini.
 
+**Optional website link:** with a website address in Settings the user can sign in with Google (through the website) and set, pause or remove a price alert for the current item; alerts live on the website, which also sends the notifications. See `docs/WEBSITE_INTEGRATION.md`.
+
 **What it is not:**
 - Not a price-history tracker. Amazon pages expose no price history, so the projection comes from a model (see below), not from past prices.
 - Not a product-level forecaster backed by trained ML. Product-level numbers come from a deterministic heuristic model; Gemini prediction markets add *macro* odds (Fed, recession) that nudge it.
@@ -122,6 +124,7 @@ Key properties:
 .
 ├── README.md                     This file (single source of truth for collaborators)
 ├── AGENTS.md                     Short rules for AI/code agents; points here
+├── docs/WEBSITE_INTEGRATION.md   What the website must implement for Google sign-in and price alerts
 ├── docs/DESIGN.md                Design system: palette, components, sources
 ├── docs/USER_GUIDE.md            End-user guide for installing and using the extension (+ docs/images)
 ├── PriceOracle.zip               Ready-to-install build of the extension (regenerate with npm run pack)
@@ -140,12 +143,14 @@ Key properties:
 
 | File | Role |
 | --- | --- |
-| `manifest.json` | MV3 manifest. Permissions: `storage`, `scripting`. Host permissions: `api.context.dev`, `api.gemini.com`, `www.amazon.com`, `amazon.com`. Declares the service worker (module), the five content scripts (in order), popup, options page (`open_in_tab`), icons. **`version` here is the release version.** |
+| `manifest.json` | MV3 manifest. Permissions: `storage`, `scripting`, `identity` (website sign-in). Host permissions: `api.context.dev`, `api.gemini.com`, `www.amazon.com`, `amazon.com`. Declares the service worker (module), the five content scripts (in order), popup, options page (`open_in_tab`), icons. **`version` here is the release version.** |
 | `src/shared/tokens.css` | Design tokens (the "Ledger" palette) for popup, options and welcome; mirrored in `TOKENS` inside `widget-template.js`. See `docs/DESIGN.md`. |
 | `src/shared/constants.js` | Single source of truth for endpoints, the default context.dev key, storage keys, cache TTLs and message type names. Imported by the worker, popup and options. Content scripts cannot import it, so `content.js` mirrors the one message name it needs. |
 | `src/background/service-worker.js` | Message router (`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`), the analysis pipeline, in-flight request de-duplication, `last_analysis` bookkeeping, and the `onInstalled` handler (opens the welcome tab and injects content scripts into already-open Amazon tabs). Always replies `{ok, data}` or `{ok:false, error}`. |
 | `src/background/context-dev.js` | context.dev client. Calls `POST /v1/web/scrape` with `formats {json, markdown}` and a pricing JSON schema. `unwrapScrapeResponse` flattens the API's `{requested, success, data}` wrappers; `extractSignals` + `signalsFromMarkdown` turn the output into normalised signals (list price, current price, low/avg/high, discount %, rating, reviews, bought-past-month, category, availability). 24 h cache per ASIN (15 min negative cache for errors). `testContextDevConnection` uses a free endpoint. |
 | `src/background/gemini-prediction.js` | Two parts. (1) **Gemini prediction markets** client: fetches Economics events, `contractProbability`, `computeMacroSignal` (Fed hike/cut odds + recession odds to a sentiment multiplier and discount boost), `blendMacro`, 3 h cache with stale fallback. (2) **Heuristic model** `simulatePrediction`: deterministic, seeded by ASIN and ISO week; mean reversion vs typical/list price, seasonal sale calendar (`findSeasonalEvent`), category sale proneness. Always available as the fallback. |
+| `src/background/site-link.js` | Website integration (needs `chrome.*`): `connectSite` (launchWebAuthFlow to `/extension/connect`), `disconnectSite`, `getSiteStatus`, `getAlertState`, `setAlert`, `removeAlert`. One `siteFetch` adds the bearer token, a 15 s timeout, turns a 401 into "expired" and a network/CORS failure into a clear message. |
+| `src/background/site-api.js` | Pure helpers for the same: `normalizeSiteUrl`, `buildConnectUrl`, `parseAuthRedirect`, `validateTarget`, `buildAlertBody`, `normalizeAlert`. |
 | `src/background/recent.js` | Pure `addRecent` for the popup's recent list. |
 | `src/background/price-history.js` | Local observation log. Pure helpers (`addObservation`, `summarize`, `historySignals`) plus chained storage writes (`recordPrice`). `historySignals` returns low/high/avg only after 3+ points over 2+ days; the worker merges them *under* context.dev signals. |
 | `src/background/projection-engine.js` | Pure functions, no `chrome.*`. `estimateVolatility`, `computeProjection`, `buildRecommendation`, `computeConfidence`, `formatUsd`. Contains the spec formulas (see below). |
@@ -170,6 +175,7 @@ Key properties:
 | `tests/history.test.mjs` | Unit tests for the local price history. |
 | `tests/parser.test.mjs` | DOM tests (jsdom) for `amazon-parser.js` using the mock pages as fixtures. |
 | `tests/widget.test.mjs` | Pure rendering tests for `widget-template.js`: escaping, tiers, chip states. |
+| `tests/site-api.test.mjs` | Unit tests for the website helpers (URL rules, redirect parsing, target validation, wire format). |
 | `tests/design.test.mjs` | Design guards: token sync, WCAG AA contrast, no emoji/gradients/soft shadows/indigo. |
 | `tests/package.test.mjs` | Guard tests: version sync, manifest file references, content-script order and classic-script rule, no inline scripts, committed zip is current. |
 | `tests/engine.test.mjs` | Unit tests (Node `node:test`): projection formulas, tier ordering, thresholds, signal extraction, scrape-response unwrapping, macro signal, heuristic determinism and bounds, seasonal calendar. |
@@ -243,13 +249,14 @@ deltaPercentMonth <= -4.0  ->  WAIT        >= +4.0  ->  BUY NOW        otherwise
 | `context_cache` | `{ [ASIN]: { fetchedAt, signals, error? } }`, 24 h TTL, max 200 entries. |
 | `gemini_macro_backoff` | `{until, reason}`: set for 5 minutes after a failed Gemini markets request so later analyses fall back instantly. Cleared by a successful fetch, Save, Clear cache or Test Connection. |
 | `gemini_macro_cache` | Last macro signal, 3 h TTL, reused up to 24 h if Gemini is unreachable (`stale: true`). |
+| `site_url`, `site_session` | Website origin from Settings and `{token, email, name, expiresAt}` from the sign-in bridge. A rejected token becomes `{email, expiresAt: 0}` so the UI can say "expired". Never sent anywhere except the site origin. |
 | `show_product_card`, `show_search_chips` | Options switches. Absent means on; `false` turns that surface off. Content scripts watch `chrome.storage.onChanged` and add or remove the UI live. |
 | `context_pause` | `{until, reason}`: circuit breaker set after a 401/402/403/429 from context.dev; no calls until `until` (30 min) or until settings are saved / Test Connection succeeds. |
 | `price_history` | `{ [ASIN]: [[timestamp, price], ...] }`: prices this browser has seen (max 40 points per ASIN, 300 ASINs, 120 days). Written by `price-history.js`. |
 | `last_analysis`, `recent_analyses`, `analysis_count` | Popup display data (`recent_analyses` holds the last 5 products, see `recent.js`). |
 
 Messages (content/popup/options to worker), names in `MSG`:
-`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`, `PO_CLEAR_HISTORY`. Every response is `{ok:true,data}` or `{ok:false,error}`.
+`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`, `PO_CLEAR_HISTORY`, and for the website link `PO_SITE_STATUS`, `PO_SITE_CONNECT`, `PO_SITE_DISCONNECT`, `PO_ALERT_STATE`, `PO_ALERT_SET`, `PO_ALERT_REMOVE`. Every response is `{ok:true,data}` or `{ok:false,error}`.
 
 Request payload extras: `forceRefresh` (product page retry) and `light` (search results, no context.dev calls). Result contract returned by `PO_ANALYZE_PRODUCT`: `{ asin, title, light, projection: {currentPrice, volatility, projectedMid, deltaPercentMonth, deltaAmount, tiers:{lowest,low,mid,high,highest}, recommendation:{action,label,message}, confidence}, meta: {history:{count,low,high,avg,spanDays}|null, context:{status,fromCache,fetchedAt,signalCount,error}, gemini:{status,isSimulated,source,rationale,summary,stale,sentimentMultiplier,discountProbability,error}} }`. The widget, popup and tests all depend on this shape; change it in one commit across all of them.
 

@@ -20,7 +20,51 @@ function banner(text, kind) {
   if (kind === 'ok') bannerTimer = setTimeout(() => (el.hidden = true), 5000);
 }
 
+function renderSite(status) {
+  const state = $('site-state');
+  $('site-disconnect').hidden = !status.connected;
+  $('site-connect').textContent = status.connected ? 'Switch account' : 'Sign in with Google';
+  if (status.siteUrl && !$('site-url').value) $('site-url').value = status.siteUrl;
+  if (status.connected) {
+    const count = status.activeAlerts === null ? '' : ` ${status.activeAlerts} active alert${status.activeAlerts === 1 ? '' : 's'}.`;
+    state.textContent = `Signed in as ${status.email || 'your account'}.${count} Product pages now show the price alert controls.`;
+  } else if (status.expired) {
+    state.textContent = 'Your sign-in expired. Sign in again to keep using price alerts.';
+  } else {
+    state.textContent = 'Not connected. Product pages show a "Set up alerts" prompt until you sign in.';
+  }
+}
+
+async function loadSite() {
+  const response = await chrome.runtime.sendMessage({ type: MSG.SITE_STATUS, withAlertCount: true });
+  if (response?.ok) renderSite(response.data);
+}
+
+async function connectSite() {
+  const button = $('site-connect');
+  button.disabled = true;
+  banner('Opening the website sign-in window…', 'info');
+  try {
+    const response = await chrome.runtime.sendMessage({ type: MSG.SITE_CONNECT, siteUrl: $('site-url').value });
+    if (!response?.ok) throw new Error(response?.error || 'Service worker unavailable');
+    $('site-url').value = response.data.siteUrl;
+    await loadSite();
+    banner('Signed in. You can now set price alerts on product pages.', 'ok');
+  } catch (err) {
+    banner(`Sign-in failed: ${err.message}`, 'err');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function disconnectSite() {
+  const response = await chrome.runtime.sendMessage({ type: MSG.SITE_DISCONNECT });
+  if (response?.ok) renderSite(response.data);
+  banner('Signed out of the website. Your alerts stay saved there.', 'ok');
+}
+
 async function load() {
+  loadSite().catch(() => {});
   const stored = await chrome.storage.local.get(STORAGE_KEYS.CONTEXT_KEY);
   $('context-key').value = (stored[STORAGE_KEYS.CONTEXT_KEY] || '').trim() || DEFAULT_CONTEXT_DEV_KEY;
   const shown = await chrome.storage.local.get(Object.keys(SWITCHES).map((id) => SWITCHES[id]));
@@ -88,6 +132,8 @@ $('reset-context').addEventListener('click', () => {
 });
 $('form').addEventListener('submit', (e) => save(e).catch((err) => banner(`Could not save: ${err.message}`, 'err')));
 $('test').addEventListener('click', testConnection);
+$('site-connect').addEventListener('click', connectSite);
+$('site-disconnect').addEventListener('click', () => disconnectSite().catch((err) => banner(`Could not sign out: ${err.message}`, 'err')));
 for (const [id, type, done] of [
   ['clear-history', MSG.CLEAR_HISTORY, 'Price history cleared.'],
   ['clear-cache', MSG.CLEAR_CACHE, 'context.dev cache cleared.']

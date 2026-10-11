@@ -35,7 +35,7 @@ const browser = await puppeteer.launch({
     '--no-sandbox',
     `--disable-extensions-except=${root}`,
     `--load-extension=${root}`,
-    `--host-resolver-rules=MAP www.amazon.com 127.0.0.1:${PORT}, MAP api.context.dev 127.0.0.1:${PORT}, MAP api.gemini.com 127.0.0.1:${PORT}`,
+    `--host-resolver-rules=MAP www.amazon.com 127.0.0.1:${PORT}, MAP api.context.dev 127.0.0.1:${PORT}, MAP api.gemini.com 127.0.0.1:${PORT}, MAP baba.test 127.0.0.1:${PORT}`,
     '--ignore-certificate-errors',
     '--window-size=1280,1000'
   ]
@@ -53,6 +53,12 @@ async function step(name, fn) {
     console.log(`  FAIL ${name}\n       ${err.message}`);
   }
 }
+
+/** Flip a switch on the mock website, e.g. `tokenValid=0`. */
+const fetchControl = (query) => {
+  const [key, value] = query.split('=');
+  stats.site[key] = value === '1';
+};
 
 /** Read text/attributes from inside the widget's shadow root. */
 const shadow = (page, fn, arg) =>
@@ -402,6 +408,178 @@ try {
     await waitPin('Current: $129.50');
     assert.match(await shadow(page, (root) => root.querySelector('.po-chip')?.textContent.trim()), /context\.dev: Connected/);
     assert.equal(stats.extract, before + 2);
+  });
+
+  // ---- Website integration: Google sign-in via the website + price alerts --------------------------------
+  const waitAlert = (pg, phase) =>
+    pg.waitForFunction(
+      (ph) => document.getElementById('price-oracle-host')?.shadowRoot?.querySelector(`.po-alert[data-phase="${ph}"]`),
+      { timeout: 15000 },
+      phase
+    );
+  const alertText = (pg) => shadow(pg, (root) => root.querySelector('.po-alert')?.textContent.replace(/\s+/g, ' ').trim());
+  const clickAlert = (pg, action) => shadow(pg, (root, a) => root.querySelector(`[data-action="${a}"]`).click(), action);
+  const typeTarget = (pg, value) => shadow(pg, (root, v) => { root.querySelector('[data-field="alert-target"]').value = v; }, value);
+  const reloadProduct = async () => {
+    await page.bringToFront();
+    await page.goto(PRODUCT, { waitUntil: 'load' });
+    await waitReady(page);
+  };
+  const siteStats = () => stats.site;
+
+  await step('without a connected website the card offers to set up alerts (no request is made)', async () => {
+    await reloadProduct();
+    await waitAlert(page, 'not_configured');
+    assert.match(await alertText(page), /Connect your PriceOracle website/);
+    assert.equal(siteStats().connects, 0);
+  });
+
+  await step('Settings: Sign in with Google opens the website bridge and stores a session', async () => {
+    await opts.bringToFront();
+    await opts.click('#site-url', { clickCount: 3 });
+    await opts.type('#site-url', 'baba.test');
+    await opts.click('#site-connect');
+    await opts.waitForFunction(() => /Signed in as june@example\.com/.test(document.getElementById('site-state').textContent), { timeout: 20000 });
+    assert.equal(siteStats().connects, 1);
+    assert.match(siteStats().lastRedirectUri, /^https:\/\/[a-p]{32}\.chromiumapp\.org\/site$/);
+    assert.equal(await opts.$eval('#site-url', (el) => el.value), 'https://baba.test');
+    assert.equal(await opts.$eval('#site-disconnect', (el) => el.hidden), false);
+    const stored = await opts.evaluate(() => chrome.storage.local.get(['site_url', 'site_session']));
+    assert.equal(stored.site_url, 'https://baba.test');
+    assert.equal(stored.site_session.token, 'po_site_token_123');
+  });
+
+  await step('a refused website sign-in shows an error and keeps the previous session', async () => {
+    await fetchControl('refuseLogin=1');
+    await opts.click('#site-connect');
+    await opts.waitForFunction(() => /Sign-in failed: The website refused sign-in/.test(document.getElementById('banner').textContent), { timeout: 20000 });
+    await fetchControl('refuseLogin=0');
+    assert.equal((await opts.evaluate(() => chrome.storage.local.get('site_session'))).site_session.token, 'po_site_token_123');
+  });
+
+  await step('product card: set a price alert; the website receives asin, title, target and price', async () => {
+    await reloadProduct();
+    await waitAlert(page, 'ready');
+    const suggested = await shadow(page, (root) => root.querySelector('[data-field="alert-target"]').value);
+    assert.match(suggested, /^\d+\.\d\d$/);
+    assert.ok(Number(suggested) < 174.99);
+    await typeTarget(page, '150');
+    await clickAlert(page, 'alert-save');
+    await page.waitForFunction(() => /Alert on/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
+    const put = siteStats().lastPut;
+    assert.equal(put.asin, 'B0CX23V258');
+    assert.equal(put.targetPrice, 150);
+    assert.equal(put.currentPrice, 174.99);
+    assert.equal(put.enabled, true);
+    assert.equal(put.url, 'https://www.amazon.com/dp/B0CX23V258');
+    assert.ok(put.title.length > 3);
+    assert.match(await alertText(page), /notifying at or below \$150\.00/);
+    await page.screenshot({ path: path.join(shots, '07-price-alert.png'), clip: { x: 0, y: 200, width: 1100, height: 780 } });
+  });
+
+  await step('a target at or above the current price is rejected without calling the website', async () => {
+    const puts = siteStats().puts;
+    await typeTarget(page, '999');
+    await clickAlert(page, 'alert-save');
+    await page.waitForFunction(() => /below the current price/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
+    assert.equal(siteStats().puts, puts);
+    assert.equal(await shadow(page, (root) => root.querySelector('[data-field="alert-target"]').value), '999');
+    await typeTarget(page, 'abc');
+    await clickAlert(page, 'alert-save');
+    await page.waitForFunction(() => /above \$0/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
+    assert.equal(siteStats().puts, puts);
+  });
+
+  await step('the alert can be turned off and on again, and is remembered across reloads', async () => {
+    await typeTarget(page, '150.00');
+    await clickAlert(page, 'alert-toggle');
+    await page.waitForFunction(() => /Alert paused/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
+    assert.equal(siteStats().lastPut.enabled, false);
+    assert.equal(siteStats().alerts.B0CX23V258.enabled, false);
+    await reloadProduct();
+    await waitAlert(page, 'ready');
+    assert.match(await alertText(page), /Alert paused.*would notify at or below \$150\.00/);
+    assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-toggle"]').textContent), 'Turn on');
+    await clickAlert(page, 'alert-toggle');
+    await page.waitForFunction(() => /Alert on/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
+    assert.equal(siteStats().alerts.B0CX23V258.enabled, true);
+  });
+
+  await step('updating the target and removing the alert are sent to the website', async () => {
+    await typeTarget(page, '140');
+    await clickAlert(page, 'alert-save');
+    await page.waitForFunction(() => /\$140\.00/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
+    assert.equal(siteStats().alerts.B0CX23V258.targetPrice, 140);
+    await clickAlert(page, 'alert-remove');
+    await page.waitForFunction(() => /Alert me when the price is at or below/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
+    assert.equal(siteStats().deletes, 1);
+    assert.deepEqual(Object.keys(siteStats().alerts), []);
+  });
+
+  await step('typing a price in the alert field does not trigger Amazon keyboard shortcuts and Enter saves', async () => {
+    await page.evaluate(() => {
+      window.__leakedKeys = 0;
+      document.addEventListener('keydown', () => window.__leakedKeys++);
+    });
+    await page.evaluate(() => {
+      const input = document.getElementById('price-oracle-host').shadowRoot.querySelector('[data-field="alert-target"]');
+      input.focus();
+      input.select();
+    });
+    await page.keyboard.type('145');
+    assert.equal(await page.evaluate(() => window.__leakedKeys), 0); // nothing typed in the field reaches Amazon's page
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => /Alert on/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
+    assert.equal(siteStats().alerts.B0CX23V258.targetPrice, 145);
+  });
+
+  await step('popup shows the signed-in website account and active alert count', async () => {
+    const pop = await browser.newPage();
+    await pop.setViewport({ width: 360, height: 760 });
+    await pop.goto(`chrome-extension://${extId}/src/popup/popup.html`);
+    await pop.waitForFunction(() => /Signed in/.test(document.getElementById('site-status').textContent), { timeout: 10000 });
+    assert.match(await pop.$eval('#site-hint', (el) => el.textContent), /june@example\.com · 1 active alert$/);
+    await pop.close();
+    await page.bringToFront();
+  });
+
+  await step('an expired website token sends the card back to "Sign in with Google"', async () => {
+    await fetchControl('tokenValid=0');
+    await reloadProduct();
+    await waitAlert(page, 'signed_out');
+    assert.match(await alertText(page), /sign-in expired.*Sign in with Google/);
+    assert.equal((await opts.evaluate(() => chrome.storage.local.get('site_session'))).site_session.token, undefined);
+    await fetchControl('tokenValid=1');
+  });
+
+  await step('signing in from Settings updates an open product page without a reload', async () => {
+    await opts.bringToFront();
+    await opts.click('#site-connect');
+    await opts.waitForFunction(() => /Signed in as/.test(document.getElementById('site-state').textContent), { timeout: 20000 });
+    await page.bringToFront();
+    await waitAlert(page, 'ready');
+    assert.equal(await shadow(page, (root) => root.querySelector('[data-field="alert-target"]').value), '145.00');
+  });
+
+  await step('a website without CORS headers is reported with a clear message', async () => {
+    await fetchControl('corsBroken=1');
+    await reloadProduct();
+    await waitAlert(page, 'error');
+    assert.match(await alertText(page), /allow cross-origin requests/);
+    await fetchControl('corsBroken=0');
+  });
+
+  await step('Sign out in Settings removes the token and hides alert controls', async () => {
+    await opts.bringToFront();
+    await opts.click('#site-disconnect');
+    await opts.waitForFunction(() => /Not connected|Signed out/.test(document.getElementById('banner').textContent + document.getElementById('site-state').textContent), { timeout: 10000 });
+    assert.deepEqual(await opts.evaluate(() => chrome.storage.local.get('site_session')), {});
+    assert.equal(await opts.$eval('#site-disconnect', (el) => el.hidden), true);
+    await reloadProduct();
+    await waitAlert(page, 'signed_out');
+    await opts.bringToFront();
+    await opts.click('#site-connect'); // leave the account connected for the popup check below
+    await opts.waitForFunction(() => /Signed in as/.test(document.getElementById('site-state').textContent), { timeout: 20000 });
   });
 
   const popup = await browser.newPage();

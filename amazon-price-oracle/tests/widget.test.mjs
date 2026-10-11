@@ -90,3 +90,64 @@ test('the card is a labelled region and exposes its busy state', () => {
   assert.match(Widget.render({ status: 'loading' }), /role="region"[^>]*aria-busy="true"/);
   assert.match(Widget.render({ status: 'ready', data: sample() }), /aria-busy="false"/);
 });
+
+const alertHtml = (alert) => Widget.render({ status: 'ready', data: sample(), alert });
+
+test('no alert section unless the content script supplies an alert view', () => {
+  assert.doesNotMatch(Widget.render({ status: 'ready', data: sample() }), /class="po-section po-alert"/);
+});
+
+test('alert section: loading, not configured, signed out, error', () => {
+  assert.match(alertHtml({ phase: 'loading' }), /Checking your alerts/);
+  const off = alertHtml({ phase: 'not_configured' });
+  assert.match(off, /data-phase="not_configured"/);
+  assert.match(off, /data-action="alert-connect"/);
+  const out = alertHtml({ phase: 'signed_out', expired: true });
+  assert.match(out, /sign-in expired/i);
+  assert.match(out, /Sign in with Google/);
+  assert.match(alertHtml({ phase: 'signed_out' }), /^(?:(?!sign-in expired)[\s\S])*$/i);
+  const err = alertHtml({ phase: 'error', error: '<b>boom</b>' });
+  assert.match(err, /data-action="alert-retry"/);
+  assert.doesNotMatch(err, /<b>boom/);
+});
+
+test('alert section: no alert yet shows the suggested target and a Set alert button', () => {
+  const html = alertHtml({ phase: 'ready', suggested: 94.5, email: 'a@b.co' });
+  assert.match(html, /data-field="alert-target"[^>]*value="94\.50"/);
+  assert.match(html, /data-action="alert-save"[^>]*>Set alert</);
+  assert.doesNotMatch(html, /alert-toggle|alert-remove/);
+  assert.match(html, /Signed in as a@b\.co/);
+});
+
+test('alert section: existing alert offers update, turn off/on and remove', () => {
+  const on = alertHtml({ phase: 'ready', suggested: 94.5, alert: { targetPrice: 90, enabled: true } });
+  assert.match(on, /Alert on/);
+  assert.match(on, /value="90\.00"/);
+  assert.match(on, /alert-toggle"[^>]*>Turn off</);
+  assert.match(on, /alert-remove/);
+  const paused = alertHtml({ phase: 'ready', suggested: 94.5, alert: { targetPrice: 90, enabled: false } });
+  assert.match(paused, /Alert paused/);
+  assert.match(paused, /would notify at or below <strong>\$90\.00/);
+  assert.match(paused, /alert-toggle"[^>]*>Turn on</);
+});
+
+test('alert section: shows "Target reached" when the price is already at or below an active target', () => {
+  assert.match(alertHtml({ phase: 'ready', alert: { targetPrice: 120, enabled: true } }), /Target reached/);
+  assert.doesNotMatch(alertHtml({ phase: 'ready', alert: { targetPrice: 120, enabled: false } }), /Target reached/);
+  assert.doesNotMatch(alertHtml({ phase: 'ready', alert: { targetPrice: 80, enabled: true } }), /Target reached/);
+});
+
+test('alert section: busy disables controls and a draft value and error are kept', () => {
+  const html = alertHtml({ phase: 'ready', alert: { targetPrice: 80, enabled: true }, busy: true, draft: '999', error: 'Pick a target below the current price.' });
+  assert.equal((html.match(/ disabled/g) || []).length, 4);
+  assert.match(html, /value="999"/);
+  assert.match(html, /role="alert">Pick a target below/);
+});
+
+test('suggestTarget stays below the current price and above zero', () => {
+  assert.equal(Widget.suggestTarget(100, 80), 80);
+  assert.equal(Widget.suggestTarget(100, 99), 95);
+  assert.equal(Widget.suggestTarget(100, NaN), 95);
+  assert.equal(Widget.suggestTarget(0.01, 0.001), 0.01);
+  assert.equal(Widget.suggestTarget(174.99, 136.49), 136.49);
+});

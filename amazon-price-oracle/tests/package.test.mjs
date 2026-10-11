@@ -54,3 +54,17 @@ test('committed PriceOracle.zip is up to date with the sources', () => {
   const committed = fs.readFileSync(path.join(root, '..', 'PriceOracle.zip'));
   assert.ok(committed.equals(fs.readFileSync(out)), 'PriceOracle.zip is stale: run `npm run pack` and commit it');
 });
+
+test('message names mirrored in content.js exist in shared constants', async () => {
+  const { MSG } = await import('../src/shared/constants.js');
+  const src = fs.readFileSync(path.join(root, 'src/content/content.js'), 'utf8');
+  const block = src.match(/const MSG = \{([\s\S]*?)\};/)[1];
+  const pairs = [...block.matchAll(/(\w+):\s*'([A-Z_]+)'/g)];
+  assert.ok(pairs.length >= 5);
+  for (const [, key, value] of pairs) assert.equal(MSG[key], value, `MSG.${key} differs from constants.js`);
+});
+
+test('the extension asks only for the permissions it needs', () => {
+  assert.deepEqual([...manifest.permissions].sort(), ['identity', 'scripting', 'storage']);
+  assert.ok(!manifest.host_permissions.some((h) => h === '<all_urls>' || h === 'https://*/*'), 'no broad host permissions');
+});

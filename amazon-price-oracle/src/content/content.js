@@ -17,7 +17,13 @@
   root.__priceOracleLoaded = true;
 
   /** Mirrors MSG in src/shared/constants.js (content scripts cannot import modules). */
-  const MSG = { ANALYZE_PRODUCT: 'PO_ANALYZE_PRODUCT' };
+  const MSG = {
+    ANALYZE_PRODUCT: 'PO_ANALYZE_PRODUCT',
+    OPEN_OPTIONS: 'PO_OPEN_OPTIONS',
+    ALERT_STATE: 'PO_ALERT_STATE',
+    ALERT_SET: 'PO_ALERT_SET',
+    ALERT_REMOVE: 'PO_ALERT_REMOVE'
+  };
   const HOST_ID = 'price-oracle-host';
   const DEBOUNCE_MS = 350;
   const CONTAINER_SELECTORS = ['#ppd', '#dp-container', '#centerCol', '#dp', '#a-page'];
@@ -30,6 +36,8 @@
   let observedNode = null;
   let debounceTimer = null;
   let lastParsed = null;
+  let cardState = { status: 'loading' };
+  let alertView = null;
   let enabled = false;
 
   function isProductPage() {
@@ -62,6 +70,9 @@
       host.id = HOST_ID;
       shadow = host.attachShadow({ mode: 'open' });
       shadow.addEventListener('click', onShadowClick);
+      shadow.addEventListener('keydown', onShadowKey);
+      shadow.addEventListener('keyup', onShadowKey);
+      shadow.addEventListener('keypress', onShadowKey);
     }
 
     const alreadyPlaced =
@@ -73,16 +84,113 @@
   }
 
   function paint(state) {
+    cardState = state;
     if (!ensureHost()) return;
-    shadow.innerHTML = PO.Widget.render(state);
+    shadow.innerHTML = PO.Widget.render(state.status === 'ready' ? { ...state, alert: alertView } : state);
   }
 
   function onShadowClick(event) {
     const target = event.target instanceof Element ? event.target.closest('[data-action]') : null;
     if (!target) return;
     const action = target.getAttribute('data-action');
-    if (action === 'retry' && lastParsed) {
-      analyze(lastParsed, true);
+    if (action === 'retry' && lastParsed) analyze(lastParsed, true);
+    else if (action === 'alert-connect') sendMessage({ type: MSG.OPEN_OPTIONS }).catch(() => {});
+    else if (action === 'alert-retry') loadAlert();
+    else if (action === 'alert-save') saveAlert(false);
+    else if (action === 'alert-toggle') saveAlert(true);
+    else if (action === 'alert-remove') removeAlert();
+  }
+
+  /** Keep typing in the target field from triggering Amazon's keyboard shortcuts; Enter saves. */
+  function onShadowKey(event) {
+    if (!(event.target instanceof Element) || !event.target.matches('[data-field="alert-target"]')) return;
+    event.stopPropagation();
+    if (event.type === 'keydown' && event.key === 'Enter') saveAlert(false);
+  }
+
+  // -------------------------------------------------------------------------
+  // Price alerts (stored on the PriceOracle website; the worker does the talking)
+  // -------------------------------------------------------------------------
+
+  const readTarget = () => shadow?.querySelector('[data-field="alert-target"]')?.value ?? '';
+  const isSignedOutError = (err) => /sign-in expired/i.test(String(err && err.message));
+
+  function setAlertView(patch) {
+    alertView = { ...alertView, ...patch };
+    if (cardState.status === 'ready') paint(cardState);
+  }
+
+  async function loadAlert() {
+    if (!lastParsed || cardState.status !== 'ready') return;
+    const { asin } = lastParsed;
+    const seq = requestSeq;
+    const suggested = PO.Widget.suggestTarget(cardState.data.projection.currentPrice, cardState.data.projection.tiers.low);
+    alertView = { phase: 'loading', suggested };
+    paint(cardState);
+    try {
+      const res = await sendMessage({ type: MSG.ALERT_STATE, asin });
+      if (seq !== requestSeq) return;
+      alertView =
+        res.state === 'ready'
+          ? { phase: 'ready', alert: res.alert, email: res.email, suggested }
+          : { phase: res.state, error: res.error, expired: res.expired, suggested };
+    } catch (err) {
+      if (seq !== requestSeq || /context invalidated/i.test(String(err && err.message))) return;
+      alertView = { phase: 'error', error: err && err.message, suggested };
+    }
+    paint(cardState);
+  }
+
+  async function saveAlert(toggle) {
+    if (!lastParsed || alertView?.phase !== 'ready' || alertView.busy) return;
+    const existing = alertView.alert;
+    const typed = readTarget();
+    setAlertView({ busy: true, error: '', draft: typed });
+    const seq = requestSeq;
+    try {
+      const alert = await sendMessage({
+        type: MSG.ALERT_SET,
+        payload: {
+          asin: lastParsed.asin,
+          title: lastParsed.title,
+          currentPrice: lastParsed.price,
+          targetPrice: toggle ? existing.targetPrice : typed,
+          enabled: toggle ? !existing.enabled : existing ? existing.enabled : true,
+          toggleOnly: Boolean(toggle)
+        }
+      });
+      if (seq !== requestSeq) return;
+      setAlertView({ busy: false, alert, draft: undefined });
+    } catch (err) {
+      if (seq !== requestSeq) return;
+      if (isSignedOutError(err)) return loadAlert();
+      setAlertView({ busy: false, error: err && err.message });
+    }
+  }
+
+  async function removeAlert() {
+    if (!lastParsed || alertView?.phase !== 'ready' || alertView.busy) return;
+    setAlertView({ busy: true, error: '' });
+    const seq = requestSeq;
+    try {
+      await sendMessage({ type: MSG.ALERT_REMOVE, asin: lastParsed.asin });
+      if (seq !== requestSeq) return;
+      setAlertView({ busy: false, alert: null, draft: undefined });
+    } catch (err) {
+      if (seq !== requestSeq) return;
+      if (isSignedOutError(err)) return loadAlert();
+      setAlertView({ busy: false, error: err && err.message });
+    }
+  }
+
+  /** Signing in (or out) from Settings in another tab updates open product pages. */
+  function watchSiteSession() {
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && ('site_session' in changes || 'site_url' in changes) && enabled) loadAlert();
+      });
+    } catch {
+      /* extension was reloaded; nothing to watch */
     }
   }
 
@@ -95,6 +203,7 @@
   async function analyze(product, forceRefresh = false) {
     const seq = ++requestSeq;
     lastParsed = product;
+    alertView = null;
     paint({ status: 'loading' });
     try {
       const data = await sendMessage({
@@ -110,6 +219,7 @@
       });
       if (seq !== requestSeq) return; // a newer variant was selected meanwhile
       paint({ status: 'ready', data });
+      loadAlert();
     } catch (err) {
       if (seq !== requestSeq) return;
       if (/context invalidated/i.test(String(err && err.message))) return; // extension was reloaded
@@ -190,6 +300,7 @@
     if (!isProductPage()) return;
     window.addEventListener('popstate', scheduleRefresh);
     window.addEventListener('pageshow', scheduleRefresh);
+    watchSiteSession();
     PO.settings.watch('productCard', (on) => (on ? enable() : disable()));
     if (await PO.settings.get('productCard')) enable();
   }

@@ -71,6 +71,17 @@ function renderLast(last) {
   $('last-when').textContent = `Analyzed ${timeAgo(last.at)}`;
 }
 
+function renderSite(site) {
+  if (site.connected) {
+    setBadge($('site-status'), true, 'Signed in');
+    const count = site.activeAlerts === null ? '' : ` · ${site.activeAlerts} active alert${site.activeAlerts === 1 ? '' : 's'}`;
+    $('site-hint').textContent = `${site.email || 'Your account'}${count}`;
+  } else {
+    setBadge($('site-status'), false, site.expired ? 'Sign in again' : site.siteUrl ? 'Signed out' : 'Not connected');
+    $('site-hint').textContent = 'Open Settings to connect your website and set price alerts from product pages.';
+  }
+}
+
 async function refresh() {
   try {
     const status = await request({ type: MSG.GET_STATUS });
@@ -85,6 +96,7 @@ async function refresh() {
         ? 'Gemini markets was unreachable on the last check: using the heuristic model only.'
         : 'Live Fed and recession odds from Gemini prediction markets feed every projection. No key required.';
     renderLast(status.lastAnalysis);
+    renderSite(await request({ type: MSG.SITE_STATUS, withAlertCount: true }));
     renderRecent(status.recent);
   } catch (err) {
     $('gem-hint').textContent = `Could not load status: ${err.message}`;

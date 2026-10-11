@@ -24,6 +24,7 @@ import {
 import { getPrediction, testGeminiConnection } from './gemini-prediction.js';
 import { addRecent } from './recent.js';
 import { clearPriceHistory, countTrackedProducts, historySignals, recordPrice } from './price-history.js';
+import { connectSite, disconnectSite, getAlertState, getSiteStatus, removeAlert, setAlert } from './site-link.js';
 import { computeProjection, estimateVolatility } from './projection-engine.js';
 
 /** In-flight analyses keyed by ASIN+price so concurrent renders share one request. */
@@ -84,6 +85,18 @@ async function handleMessage(message) {
     case MSG.OPEN_OPTIONS:
       await chrome.runtime.openOptionsPage();
       return true;
+    case MSG.SITE_STATUS:
+      return getSiteStatus({ withAlertCount: Boolean(message.withAlertCount) });
+    case MSG.SITE_CONNECT:
+      return connectSite(message.siteUrl);
+    case MSG.SITE_DISCONNECT:
+      return disconnectSite();
+    case MSG.ALERT_STATE:
+      return getAlertState(String(message.asin || '').toUpperCase());
+    case MSG.ALERT_SET:
+      return setAlert({ ...message.payload, asin: String(message.payload?.asin || '').toUpperCase() });
+    case MSG.ALERT_REMOVE:
+      return removeAlert(String(message.asin || '').toUpperCase());
     case MSG.CLEAR_HISTORY:
       await clearPriceHistory();
       return true;
