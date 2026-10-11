@@ -61,11 +61,12 @@ export async function getContextDevKey() {
  * Fetch (or load from cache) context signals for an ASIN.
  *
  * @param {string} asin
- * @param {{forceRefresh?: boolean}} [options]
+ * @param {{forceRefresh?: boolean, cacheOnly?: boolean}} [options]
+ *        cacheOnly never calls the API: it returns a valid cache hit or `status: 'skipped'`.
  * @returns {Promise<ContextResult>}
  *
  * @typedef {Object} ContextResult
- * @property {'connected'|'cached'|'error'} status
+ * @property {'connected'|'cached'|'skipped'|'error'} status
  * @property {boolean} fromCache
  * @property {number|null} fetchedAt
  * @property {ContextSignals} signals   Empty object when unavailable.
@@ -84,7 +85,7 @@ export async function getContextDevKey() {
  * @property {string} [category]
  * @property {string} [availability]
  */
-export async function fetchProductContext(asin, { forceRefresh = false } = {}) {
+export async function fetchProductContext(asin, { forceRefresh = false, cacheOnly = false } = {}) {
   const cache = await readCache();
   const entry = cache[asin];
 
@@ -97,6 +98,8 @@ export async function fetchProductContext(asin, { forceRefresh = false } = {}) {
       return { status: 'error', fromCache: true, fetchedAt: entry.fetchedAt, signals: {}, error: entry.error };
     }
   }
+
+  if (cacheOnly) return { status: 'skipped', fromCache: false, fetchedAt: null, signals: {} };
 
   try {
     const { key } = await getContextDevKey();

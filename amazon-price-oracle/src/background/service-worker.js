@@ -3,9 +3,11 @@
  *
  * Responsibilities:
  *  - Message router for the content script, popup and options page.
- *  - All cross-origin traffic (context.dev, Gemini) so pages never hit CORS.
- *  - Orchestrates: context.dev signals -> volatility -> Gemini/heuristic
+ *  - All cross-origin traffic (context.dev, Gemini markets) so pages never hit CORS.
+ *  - Orchestrates: context.dev signals -> volatility -> Gemini-markets/heuristic
  *    prediction -> 5-tier projection, and persists the last result for the popup.
+ *  - Two analysis depths: full (product pages, spends context.dev credits) and
+ *    light (search results: cached context.dev data only, no credits).
  *
  * The worker keeps no in-memory state that matters across restarts; everything
  * durable lives in chrome.storage.local.
@@ -34,6 +36,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
+  // The optional Gemini API key was removed; delete any key saved by older versions.
+  chrome.storage.local.remove('gemini_api_key');
   if (details.reason !== 'install') return;
   chrome.storage.local.set({ [STORAGE_KEYS.ANALYSIS_COUNT]: 0 });
   chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome/welcome.html') });
@@ -91,6 +95,7 @@ async function handleMessage(message) {
  * @param {string} [page.title]
  * @param {string} [page.category]
  * @param {boolean} [page.forceRefresh]
+ * @param {boolean} [page.light]  Search-result mode: use cached context.dev data only (no credits).
  */
 async function analyzeProduct(page) {
   const asin = String(page?.asin || '').toUpperCase();
@@ -98,7 +103,7 @@ async function analyzeProduct(page) {
   if (!/^[A-Z0-9]{10}$/.test(asin)) throw new Error('Invalid ASIN');
   if (!(price > 0)) throw new Error('Could not read a valid price');
 
-  const key = `${asin}:${price}:${page.forceRefresh ? 'f' : ''}`;
+  const key = `${asin}:${price}:${page.forceRefresh ? 'f' : ''}${page.light ? 'l' : ''}`;
   if (inflight.has(key)) return inflight.get(key);
 
   const job = runPipeline({ ...page, asin, price }).finally(() => inflight.delete(key));
@@ -107,8 +112,12 @@ async function analyzeProduct(page) {
 }
 
 async function runPipeline(page) {
-  const context = await fetchProductContext(page.asin, { forceRefresh: Boolean(page.forceRefresh) });
-  const { signals } = context;
+  const light = Boolean(page.light);
+  const context = await fetchProductContext(page.asin, {
+    forceRefresh: !light && Boolean(page.forceRefresh),
+    cacheOnly: light
+  });
+  const signals = { ...context.signals };
 
   const volatility = estimateVolatility({
     category: page.category,
@@ -136,7 +145,7 @@ async function runPipeline(page) {
     sentimentMultiplier: prediction.sentimentMultiplier,
     priceDrift: prediction.priceDrift,
     quality: {
-      hasContext: context.status !== 'error',
+      hasContext: context.status === 'connected' || context.status === 'cached',
       signalCount,
       isSimulated: prediction.isSimulated
     }
@@ -145,6 +154,7 @@ async function runPipeline(page) {
   const result = {
     asin: page.asin,
     title: page.title || '',
+    light,
     projection,
     meta: {
       context: {
@@ -168,7 +178,7 @@ async function runPipeline(page) {
     }
   };
 
-  await recordLastAnalysis(result);
+  if (!light) await recordLastAnalysis(result);
   return result;
 }
 
@@ -193,16 +203,11 @@ async function recordLastAnalysis(result) {
   });
 }
 
-/** Snapshot used by the popup. Never exposes the key values themselves. */
+/** Snapshot used by the popup. Never exposes the key value itself. */
 async function getStatus() {
-  const stored = await chrome.storage.local.get([
-    STORAGE_KEYS.GEMINI_KEY,
-    STORAGE_KEYS.LAST_ANALYSIS,
-    STORAGE_KEYS.ANALYSIS_COUNT
-  ]);
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.LAST_ANALYSIS, STORAGE_KEYS.ANALYSIS_COUNT]);
   const contextKey = await getContextDevKey();
   return {
-    geminiKeySet: Boolean((stored[STORAGE_KEYS.GEMINI_KEY] || '').trim()),
     contextKeySet: Boolean(contextKey.key),
     usingDefaultContextKey: contextKey.isDefault,
     cachedProducts: await countCachedProducts(),
@@ -212,15 +217,12 @@ async function getStatus() {
 }
 
 /**
- * Validate API reachability. Uses keys from the options form when supplied
- * (so users can test before saving), otherwise the stored ones.
- * @param {{contextDev?: string, gemini?: string}} keys
+ * Validate API reachability. Uses the key from the options form when supplied
+ * (so users can test before saving), otherwise the stored one.
+ * @param {{contextDev?: string}} keys
  */
 async function testConnections(keys) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.GEMINI_KEY);
   const contextKey = (keys.contextDev || '').trim() || (await getContextDevKey()).key || DEFAULT_CONTEXT_DEV_KEY;
-  const geminiKey = (keys.gemini || '').trim() || (stored[STORAGE_KEYS.GEMINI_KEY] || '').trim();
-
-  const [contextDev, gemini] = await Promise.all([testContextDevConnection(contextKey), testGeminiConnection(geminiKey)]);
+  const [contextDev, gemini] = await Promise.all([testContextDevConnection(contextKey), testGeminiConnection()]);
   return { contextDev, gemini };
 }

@@ -170,14 +170,99 @@ try {
     assert.equal(await page.evaluate(() => document.querySelectorAll('#price-oracle-host').length), 1);
   });
 
+  const SEARCH = 'https://www.amazon.com/s?k=echo+dot&i=amazon-devices&crid=108B55GQBXYNS&sprefix=echo+d%2Camazon-devices%2C229&ref=nb_sb_noss_2';
+  const search = await browser.newPage();
+  await search.setViewport({ width: 1280, height: 1000 });
+  search.on('pageerror', (e) => console.log('  page error:', e.message));
+  const chipHosts = (pg) => pg.evaluate(() => [...document.querySelectorAll('[data-price-oracle-chip]')].length);
+  const waitChips = (pg, count) =>
+    pg.waitForFunction(
+      (n) => {
+        const hosts = [...document.querySelectorAll('[data-price-oracle-chip]')];
+        return hosts.length === n && hosts.every((h) => h.shadowRoot?.querySelector('button.pc-chip:not(.error)'));
+      },
+      { timeout: 20000 },
+      count
+    );
+  const extractBefore = stats.extract;
+
+  await step('search page: every card with a price gets a chip right after its price row', async () => {
+    await search.goto(SEARCH, { waitUntil: 'load' });
+    await waitChips(search, 3); // the "See options" card has no price, so no chip
+    const info = await search.evaluate(() =>
+      [...document.querySelectorAll('[data-price-oracle-chip]')].map((h) => ({
+        asin: h.closest('[data-asin]').getAttribute('data-asin'),
+        after: h.previousElementSibling?.getAttribute('data-cy') || h.previousElementSibling?.className,
+        mode: h.shadowRoot.mode,
+        chip: h.shadowRoot.querySelector('.pc-chip').textContent.replace(/\s+/g, ' ').trim()
+      }))
+    );
+    console.log('       ', JSON.stringify(info));
+    assert.deepEqual(info.map((i) => i.asin), ['B0SEARCH01', 'B0SEARCH02', 'B0SEARCH04']);
+    assert.equal(info[0].after, 'price-recipe');
+    assert.equal(info[1].after, 'a-row');
+    for (const i of info) {
+      assert.equal(i.mode, 'open');
+      assert.match(i.chip, /(WAIT|BUY NOW|FAIR PRICE) [+-]?\d+\.\d% \/ 30d/);
+    }
+  });
+
+  await step('search page: analysis is light (no context.dev credits) and reuses one Gemini markets call', async () => {
+    assert.equal(stats.extract, extractBefore);
+    assert.equal(stats.markets, 1);
+  });
+
+  await step('search page: chip styles are isolated from Amazon CSS', async () => {
+    const styles = await search.evaluate(() => {
+      const chip = document.querySelector('[data-price-oracle-chip]').shadowRoot.querySelector('.pc-chip');
+      const cs = getComputedStyle(chip);
+      return { size: cs.fontSize, spacing: cs.letterSpacing };
+    });
+    assert.equal(styles.size, '12px');
+    assert.equal(styles.spacing, 'normal');
+  });
+
+  await step('search page: clicking a chip expands tiers; deep analysis calls context.dev once', async () => {
+    await search.evaluate(() => document.querySelector('[data-price-oracle-chip]').shadowRoot.querySelector('.pc-chip').click());
+    const panel = await search.evaluate(() => {
+      const root = document.querySelector('[data-price-oracle-chip]').shadowRoot;
+      return {
+        tiers: root.querySelectorAll('.pc-tier').length,
+        quick: /Quick estimate/.test(root.textContent),
+        deep: root.querySelector('[data-action="deep"]')?.textContent.trim()
+      };
+    });
+    assert.equal(panel.tiers, 5);
+    assert.equal(panel.quick, true);
+    assert.match(panel.deep, /Deep analysis/);
+    await search.screenshot({ path: path.join(shots, '06-search-results.png'), clip: { x: 0, y: 0, width: 1100, height: 520 } });
+
+    await search.evaluate(() => document.querySelector('[data-price-oracle-chip]').shadowRoot.querySelector('[data-action="deep"]').click());
+    await search.waitForFunction(
+      () => !document.querySelector('[data-price-oracle-chip]').shadowRoot.querySelector('[data-action="deep"]'),
+      { timeout: 20000 }
+    );
+    assert.equal(stats.extract, extractBefore + 1);
+    assert.equal(stats.lastExtractBody.url, 'https://www.amazon.com/dp/B0SEARCH01');
+    assert.equal(await chipHosts(search), 3);
+  });
+
+  await step('search page: lazily loaded cards get a chip too', async () => {
+    await search.click('#load-more');
+    await waitChips(search, 4);
+  });
+
+  await search.close();
+  await page.bringToFront();
+
   const opts = await browser.newPage();
   await opts.setViewport({ width: 900, height: 900 });
   await opts.goto(`chrome-extension://${extId}/src/options/options.html`);
 
-  await step('options page pre-fills the context.dev key; Gemini key is optional', async () => {
+  await step('options page pre-fills the context.dev key and has no Gemini key field', async () => {
     assert.equal(await opts.$eval('#context-key', (el) => el.value), 'ctxt_secret_7390b0f7f788470c85aa687254599803');
-    assert.equal(await opts.$eval('#gemini-key', (el) => el.value), '');
-    assert.match(await opts.$eval('#gemini-state', (el) => el.textContent), /no key/i);
+    assert.equal(await opts.$('#gemini-key'), null);
+    assert.doesNotMatch(await opts.$eval('body', (el) => el.textContent), /Gemini API key/);
   });
 
   await step('Test Connection reaches context.dev and Gemini prediction markets', async () => {
@@ -191,15 +276,14 @@ try {
     await opts.screenshot({ path: path.join(shots, '02-options.png') });
   });
 
-  await step('an optional Gemini key is saved and sent as X-GEMINI-APIKEY', async () => {
-    await opts.type('#gemini-key', 'my-gemini-key');
+  await step('saving settings clears the macro cache; Gemini markets is called without any key', async () => {
     await opts.click('#save');
     await opts.waitForFunction(() => /Settings saved/.test(document.getElementById('banner').textContent));
     await page.bringToFront();
     await page.goto(PRODUCT, { waitUntil: 'load' });
     await waitReady(page);
-    assert.equal(stats.markets, 2); // saving a key clears the macro cache
-    assert.equal(stats.lastGeminiKeyHeader, 'my-gemini-key');
+    assert.equal(stats.markets, 2);
+    assert.equal(stats.lastGeminiKeyHeader, null);
   });
 
   await step('if Gemini markets is down the card falls back to the heuristic model', async () => {
@@ -221,18 +305,13 @@ try {
   await popup.setViewport({ width: 360, height: 640 });
   await popup.goto(`chrome-extension://${extId}/src/popup/popup.html`);
 
-  await step('popup shows last analysis, stats and key status; modal saves a key', async () => {
+  await step('popup shows last analysis, stats and connections; no Gemini key controls', async () => {
     await popup.waitForFunction(() => !document.getElementById('last-body').hidden, { timeout: 10000 });
     assert.ok(Number(await popup.$eval('#stat-count', (el) => el.textContent)) >= 3);
     assert.match(await popup.$eval('#ctx-status', (el) => el.textContent), /Default key active/);
-    await popup.click('#add-gemini');
-    assert.equal(await popup.$eval('#modal', (el) => el.hidden), false);
-    await popup.screenshot({ path: path.join(shots, '04-popup-modal.png') });
-    await popup.type("#gemini-input", "popup-key");
-    await popup.click('#modal-save');
-    await popup.waitForFunction(() => document.getElementById('modal').hidden, { timeout: 5000 });
     assert.match(await popup.$eval('#gem-status', (el) => el.textContent), /Offline/); // last analysis ran while markets were down
-    assert.match(await popup.$eval('#gem-key-status', (el) => el.textContent), /Saved/);
+    assert.equal(await popup.$('#add-gemini'), null);
+    assert.equal(await popup.$('#modal'), null);
     await popup.screenshot({ path: path.join(shots, '05-popup.png') });
   });
 } finally {

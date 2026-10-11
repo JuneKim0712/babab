@@ -12,8 +12,7 @@
  * Rate-hike odds mean inflation pressure (prices up); recession odds mean weaker
  * demand (more discounts).
  *
- * No key is required. An optional key is stored in chrome.storage.local and sent
- * in the `X-GEMINI-APIKEY` header. If Gemini markets cannot be reached, the
+ * No API key is needed. If Gemini markets cannot be reached, the
  * extension falls back to the heuristic model alone ("Prediction Simulation
  * Mode", `isSimulated: true`) and never breaks.
  */
@@ -111,42 +110,49 @@ export function blendMacro(base, macro) {
  * @returns {Promise<MacroSignal>}
  */
 export async function getMacroSignal(now = new Date()) {
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.MACRO_CACHE, STORAGE_KEYS.GEMINI_KEY]);
-  const cached = stored[STORAGE_KEYS.MACRO_CACHE];
+  const cached = (await chrome.storage.local.get(STORAGE_KEYS.MACRO_CACHE))[STORAGE_KEYS.MACRO_CACHE];
   const age = cached ? Date.now() - cached.fetchedAt : Infinity;
   if (cached && age < MACRO_CACHE_TTL_MS) return cached;
 
+  // A search page analyses dozens of cards at once; they must share one network call.
+  if (!macroInflight) {
+    macroInflight = refreshMacroSignal(now).finally(() => {
+      macroInflight = null;
+    });
+  }
   try {
-    const events = await fetchEconomicsEvents((stored[STORAGE_KEYS.GEMINI_KEY] || '').trim());
-    const macro = computeMacroSignal(events, now);
-    await chrome.storage.local.set({ [STORAGE_KEYS.MACRO_CACHE]: macro });
-    return macro;
+    return await macroInflight;
   } catch (err) {
     if (cached && age < MACRO_STALE_MAX_MS) return { ...cached, stale: true };
     throw err;
   }
 }
 
+let macroInflight = null;
+
+async function refreshMacroSignal(now) {
+  const events = await fetchEconomicsEvents();
+  const macro = computeMacroSignal(events, now);
+  await chrome.storage.local.set({ [STORAGE_KEYS.MACRO_CACHE]: macro });
+  return macro;
+}
+
 /**
  * GET /v1/prediction-markets/events?status=active&category=Economics
- * @param {string} [apiKey] Optional key, sent as X-GEMINI-APIKEY.
  * @returns {Promise<any[]>} The `data` array of events.
  */
-export async function fetchEconomicsEvents(apiKey = '') {
+export async function fetchEconomicsEvents() {
   const url = `${GEMINI_MARKETS_BASE}/events?status=active&category=Economics&limit=50`;
-  const body = await geminiGet(url, apiKey);
+  const body = await geminiGet(url);
   if (!Array.isArray(body?.data)) throw new Error('Gemini markets returned an unexpected response');
   return body.data;
 }
 
-async function geminiGet(url, apiKey) {
+async function geminiGet(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
-      headers: apiKey ? { 'X-GEMINI-APIKEY': apiKey } : {},
-      signal: controller.signal
-    });
+    const res = await fetch(url, { signal: controller.signal });
     if (res.status === 429) throw new Error('Gemini markets rate limit reached (HTTP 429)');
     if (!res.ok) throw new Error(`Gemini markets request failed (HTTP ${res.status})`);
     return await res.json();
@@ -229,17 +235,16 @@ export function computeMacroSignal(events, now = new Date()) {
 
 /**
  * Reachability check for "Test Connection". Calls the lightweight categories
- * endpoint (the market data is public, so the key is optional).
- * @param {string} [apiKey]
+ * endpoint (public market data, no key).
  * @returns {Promise<{ok: boolean, message: string}>}
  */
-export async function testGeminiConnection(apiKey = '') {
+export async function testGeminiConnection() {
   try {
-    const body = await geminiGet(`${GEMINI_MARKETS_BASE}/categories`, apiKey);
+    const body = await geminiGet(`${GEMINI_MARKETS_BASE}/categories`);
     const count = Array.isArray(body?.categories) ? body.categories.length : 0;
     return {
       ok: true,
-      message: `Connected — Gemini prediction markets reachable (${count} categories). Market data is public; an API key is optional.`
+      message: `Connected — Gemini prediction markets reachable (${count} categories). Market data is public; no key needed.`
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

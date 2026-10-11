@@ -4,6 +4,7 @@
  *
  * Serves, over HTTPS with a throw-away self-signed certificate:
  *   - https://www.amazon.com/dp/<ASIN>  -> test-page/amazon-product.html (mock product page)
+ *   - https://www.amazon.com/s?k=...    -> test-page/amazon-search.html (mock search results)
  *   - POST /v1/web/scrape, GET /v1/org/logs -> mock context.dev (host api.context.dev)
  *   - GET  /v1/prediction-markets/*     -> mock Gemini prediction markets (host api.gemini.com)
  *   - GET  /__control?marketsDown=1|0   -> make the mock Gemini markets fail (tests the offline fallback)
@@ -111,6 +112,10 @@ export function createServer() {
     if (/^\/(dp|gp\/product)\//.test(url.pathname)) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(fs.readFileSync(path.join(here, 'amazon-product.html')));
+    }
+    if (url.pathname === '/s') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(fs.readFileSync(path.join(here, 'amazon-search.html')));
     }
     res.writeHead(404);
     res.end('not found');

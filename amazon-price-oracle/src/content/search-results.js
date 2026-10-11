@@ -1,0 +1,275 @@
+/**
+ * Search-results content script.
+ *
+ * On amazon.com/s?... pages, adds a compact PriceOracle chip under the price of
+ * every result card: a verdict (WAIT / BUY NOW / FAIR PRICE) and the 30-day
+ * change. Clicking the chip expands the five projected price tiers.
+ *
+ * Search analyses are "light": the service worker never spends context.dev
+ * credits for them, it only reuses cached data. The expanded panel offers an
+ * explicit "Deep analysis" button that runs the full pipeline for one product.
+ *
+ * - Cards are analysed lazily as they approach the viewport (IntersectionObserver),
+ *   at most MAX_CONCURRENT at a time.
+ * - Each chip lives in its own Shadow DOM host so Amazon's CSS cannot leak in or out.
+ * - A debounced MutationObserver picks up lazily loaded cards and re-renders cards
+ *   whose price changed.
+ */
+(function (root) {
+  'use strict';
+
+  const PO = root.PriceOracle;
+  if (!PO || !PO.Parser || !PO.Widget) return;
+  if (!PO.Parser.isSearchPage(location)) return;
+  if (root.__priceOracleSearchLoaded) return;
+  root.__priceOracleSearchLoaded = true;
+
+  /** Mirrors MSG in src/shared/constants.js (content scripts cannot import modules). */
+  const MSG = { ANALYZE_PRODUCT: 'PO_ANALYZE_PRODUCT' };
+  const HOST_ATTR = 'data-price-oracle-chip';
+  const MAX_CONCURRENT = 4;
+  const DEBOUNCE_MS = 300;
+  const VIEWPORT_MARGIN = '400px 0px';
+
+  /** @type {WeakMap<Element, CardState>} */
+  const cards = new WeakMap();
+  const queue = [];
+  let active = 0;
+  let debounceTimer = null;
+  let intersection = null;
+  let mutationObserver = null;
+  let observedRoot = null;
+
+  /**
+   * @typedef {Object} CardState
+   * @property {HTMLElement} host
+   * @property {ShadowRoot} shadow
+   * @property {string} signature   asin|price|category the current result belongs to
+   * @property {Object} product
+   * @property {{status: string, data?: any, error?: string, expanded?: boolean, deepLoading?: boolean}} view
+   * @property {number} seq         guards against out-of-order responses
+   * @property {boolean} queued
+   * @property {boolean} [analysed]  analysis was requested (set when the card first nears the viewport)
+   */
+
+  function sendMessage(message) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage(message, (response) => {
+          const err = chrome.runtime.lastError;
+          if (err) return reject(new Error(err.message));
+          if (!response) return reject(new Error('No response from the PriceOracle service worker'));
+          if (!response.ok) return reject(new Error(response.error || 'Unknown error'));
+          resolve(response.data);
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Placement and rendering
+  // -------------------------------------------------------------------------
+
+  /** Element the chip goes after: the price row of the card. */
+  function findAnchor(card) {
+    const price = card.querySelector('.a-price:not(.a-text-price)');
+    if (!price) return null;
+    return price.closest('[data-cy="price-recipe"]') || price.closest('.a-row') || price.parentElement;
+  }
+
+  function paint(state) {
+    state.shadow.innerHTML = PO.Widget.renderChip(state.view);
+  }
+
+  function place(card, state) {
+    const anchor = findAnchor(card);
+    if (!anchor) return false;
+    if (state.host.previousElementSibling !== anchor || !state.host.isConnected) {
+      anchor.insertAdjacentElement('afterend', state.host);
+    }
+    return true;
+  }
+
+  function createState(card, product, signature) {
+    const host = document.createElement('div');
+    host.setAttribute(HOST_ATTR, '');
+    const shadow = host.attachShadow({ mode: 'open' });
+    /** @type {CardState} */
+    const state = { host, shadow, signature, product, view: { status: 'loading' }, seq: 0, queued: false };
+    shadow.addEventListener('click', (event) => onClick(card, state, event));
+    cards.set(card, state);
+    return state;
+  }
+
+  // -------------------------------------------------------------------------
+  // Analysis
+  // -------------------------------------------------------------------------
+
+  function payload(state, extra) {
+    const { product } = state;
+    return {
+      asin: product.asin,
+      price: product.price,
+      listPrice: product.listPrice,
+      title: product.title,
+      category: product.category,
+      ...extra
+    };
+  }
+
+  async function runAnalysis(state, { deep }) {
+    const seq = ++state.seq;
+    if (deep) {
+      state.view = { ...state.view, deepLoading: true };
+    } else {
+      state.view = { status: 'loading' };
+    }
+    paint(state);
+    try {
+      const data = await sendMessage({ type: MSG.ANALYZE_PRODUCT, payload: payload(state, { light: !deep }) });
+      if (seq !== state.seq) return;
+      state.view = { status: 'ready', data, expanded: Boolean(state.view.expanded) || deep };
+    } catch (err) {
+      if (seq !== state.seq) return;
+      if (/context invalidated/i.test(String(err && err.message))) return;
+      state.view = deep && state.view.data
+        ? { ...state.view, deepLoading: false }
+        : { status: 'error', error: err && err.message };
+    }
+    paint(state);
+  }
+
+  function pump() {
+    while (active < MAX_CONCURRENT && queue.length) {
+      const state = queue.shift();
+      state.queued = false;
+      active++;
+      runAnalysis(state, { deep: false }).finally(() => {
+        active--;
+        pump();
+      });
+    }
+  }
+
+  function enqueue(state) {
+    if (state.queued) return;
+    state.queued = true;
+    queue.push(state);
+    pump();
+  }
+
+  function onClick(card, state, event) {
+    const target = event.target instanceof Element ? event.target.closest('[data-action]') : null;
+    if (!target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const action = target.getAttribute('data-action');
+    if (action === 'toggle' && state.view.status === 'ready') {
+      state.view = { ...state.view, expanded: !state.view.expanded };
+      paint(state);
+    } else if (action === 'retry') {
+      enqueue(state);
+    } else if (action === 'deep' && !state.view.deepLoading) {
+      runAnalysis(state, { deep: true });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Discovery
+  // -------------------------------------------------------------------------
+
+  function ensureIntersection() {
+    if (intersection || typeof IntersectionObserver === 'undefined') return;
+    intersection = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          intersection.unobserve(entry.target);
+          const state = cards.get(entry.target);
+          if (state && state.view.status === 'loading' && !state.analysed) {
+            state.analysed = true;
+            enqueue(state);
+          }
+        }
+      },
+      { rootMargin: VIEWPORT_MARGIN }
+    );
+  }
+
+  /** Make sure every card with a price has a chip, and re-analyse cards whose price changed. */
+  function scan() {
+    const category = PO.Parser.getSearchCategory(document, location);
+    for (const card of PO.Parser.getSearchCards(document)) {
+      const product = PO.Parser.parseSearchCard(card);
+      const existing = cards.get(card);
+
+      if (!product) {
+        if (existing) existing.host.remove();
+        continue;
+      }
+      product.category = category;
+      const signature = `${product.asin}|${product.price}|${category}`;
+
+      if (existing && existing.signature === signature) {
+        place(card, existing); // re-attach if Amazon re-rendered the card
+        continue;
+      }
+
+      if (existing) existing.host.remove();
+      const state = createState(card, product, signature);
+      if (!place(card, state)) continue;
+      paint(state);
+      if (intersection) {
+        intersection.observe(card);
+      } else {
+        state.analysed = true;
+        enqueue(state);
+      }
+    }
+  }
+
+  function scheduleScan() {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      attachObserver();
+      scan();
+    }, DEBOUNCE_MS);
+  }
+
+  function findResultsRoot() {
+    return document.querySelector('.s-main-slot') || document.querySelector('#search') || document.body;
+  }
+
+  function isOurs(node) {
+    return node instanceof Element && node.hasAttribute(HOST_ATTR);
+  }
+
+  /** Observe the results grid; Amazon swaps it out when filters or pages change. */
+  function attachObserver() {
+    const target = findResultsRoot();
+    if (target === observedRoot && mutationObserver) return;
+    if (mutationObserver) mutationObserver.disconnect();
+    observedRoot = target;
+    mutationObserver = new MutationObserver((mutations) => {
+      const relevant = mutations.some((m) => {
+        if (isOurs(m.target)) return false;
+        const touched = [...m.addedNodes, ...m.removedNodes];
+        return !(touched.length > 0 && touched.every(isOurs));
+      });
+      if (relevant) scheduleScan();
+    });
+    mutationObserver.observe(target, { childList: true, subtree: true });
+  }
+
+  function init() {
+    ensureIntersection();
+    attachObserver();
+    scan();
+    window.addEventListener('popstate', scheduleScan);
+    window.addEventListener('pageshow', scheduleScan);
+  }
+
+  init();
+})(globalThis);

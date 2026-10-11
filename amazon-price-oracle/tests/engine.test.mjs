@@ -5,12 +5,13 @@ import {
   estimateVolatility,
   buildRecommendation
 } from '../src/background/projection-engine.js';
-import { extractSignals, signalsFromMarkdown, unwrapScrapeResponse } from '../src/background/context-dev.js';
+import { extractSignals, fetchProductContext, signalsFromMarkdown, unwrapScrapeResponse } from '../src/background/context-dev.js';
 import {
   blendMacro,
   computeMacroSignal,
   contractProbability,
   findSeasonalEvent,
+  getMacroSignal,
   simulatePrediction
 } from '../src/background/gemini-prediction.js';
 
@@ -188,4 +189,60 @@ test('scrape response wrapper is unwrapped and failures surface clearly', () => 
     }),
     /HTTP 404/
   );
+});
+
+/** Minimal in-memory chrome.storage.local + fetch stubs for background modules. */
+function stubChrome() {
+  const store = {};
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get: async (keys) => {
+          const list = Array.isArray(keys) ? keys : [keys];
+          return Object.fromEntries(list.filter((k) => k in store).map((k) => [k, store[k]]));
+        },
+        set: async (obj) => Object.assign(store, obj),
+        remove: async (keys) => [].concat(keys).forEach((k) => delete store[k])
+      }
+    }
+  };
+  return store;
+}
+
+test('light mode (cacheOnly) never calls context.dev and reports "skipped"', async () => {
+  stubChrome();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    throw new Error('network must not be used');
+  };
+  const result = await fetchProductContext('B0SEARCH01', { cacheOnly: true });
+  assert.equal(result.status, 'skipped');
+  assert.deepEqual(result.signals, {});
+  assert.equal(calls, 0);
+});
+
+test('concurrent macro lookups share a single Gemini markets request', async () => {
+  stubChrome();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    await new Promise((r) => setTimeout(r, 10));
+    return { ok: true, status: 200, json: async () => ({
+        data: [
+          {
+            ticker: 'RECESSION26',
+            title: 'Recession this year?',
+            expiryDate: '2099-02-01T00:00:00.000Z',
+            contracts: [{ label: 'Yes', prices: { bestBid: '0.03', bestAsk: '0.05', lastTradePrice: '0.04' } }]
+          }
+        ]
+      })
+    };
+  };
+  const results = await Promise.all(Array.from({ length: 20 }, () => getMacroSignal(new Date('2026-01-15'))));
+  assert.equal(calls, 1);
+  assert.ok(results.every((r) => r.sentimentMultiplier === results[0].sentimentMultiplier));
+  await getMacroSignal(new Date('2026-01-15')); // now served from the 3h cache
+  assert.equal(calls, 1);
 });

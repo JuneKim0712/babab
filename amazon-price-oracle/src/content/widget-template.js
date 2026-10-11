@@ -3,14 +3,17 @@
  *
  * Classic content script. Exposes `globalThis.PriceOracle.Widget` with:
  *   - STYLES: CSS string injected inside the shadow root (Amazon CSS cannot leak in)
- *   - render(state): HTML string for the card
+ *   - render(state): HTML string for the full product-page card
+ *   - renderChip(state): HTML string for the compact search-result chip
  *
  * state = { status: 'loading' }
  *       | { status: 'error', error: string }
  *       | { status: 'ready', data: AnalysisResult }   (see service-worker.js)
  *
- * Interactive elements carry `data-action` attributes ("retry");
- * content.js wires a single delegated click listener.
+ * Chip state adds `expanded` and `deepLoading` booleans.
+ *
+ * Interactive elements carry `data-action` attributes ("retry", "toggle", "deep");
+ * content.js / search-results.js wire a single delegated click listener each.
  */
 (function (root) {
   'use strict';
@@ -155,6 +158,9 @@
     if (context.status === 'error') {
       return `<span class="po-chip warn" title="${escapeHtml(context.error || 'context.dev unavailable')}"><i class="po-dot"></i>context.dev: Offline — using page data</span>`;
     }
+    if (context.status === 'skipped') {
+      return '<span class="po-chip warn" title="Quick estimate from page data"><i class="po-dot"></i>context.dev: Not used (quick estimate)</span>';
+    }
     const suffix = context.fromCache ? ' (cached)' : '';
     return `<span class="po-chip" title="${context.signalCount} pricing signals"><i class="po-dot"></i>context.dev: Connected${suffix}</span>`;
   }
@@ -259,5 +265,110 @@
     return `<style>${STYLES}</style><div class="po-wrap"><div class="po-card">${renderCard(state)}</div></div>`;
   }
 
-  PO.Widget = { STYLES, render, pinPosition };
+  // -------------------------------------------------------------------------
+  // Search-result chip
+  // -------------------------------------------------------------------------
+
+  const CHIP_STYLES = `
+    :host { all: initial; display: block; }
+    *, *::before, *::after { box-sizing: border-box; }
+    .pc-wrap { container-type: inline-size; margin: 6px 0 4px; max-width: 100%;
+      font-family: "Amazon Ember", -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size: 12px; line-height: 1.35;
+      font-style: normal; font-weight: 400; letter-spacing: normal; text-transform: none; text-align: left; color: #0f172a; direction: ltr; }
+    .pc-chip { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; max-width: 100%; font: inherit; cursor: pointer;
+      padding: 4px 10px; border-radius: 999px; border: 1px solid #cbd5e1; background: #f1f5f9; color: #334155; text-align: left; }
+    .pc-chip:hover { filter: brightness(0.97); }
+    .pc-chip:focus-visible, .pc-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+    .pc-chip.WAIT { background: #FEF2F2; color: #DC2626; border-color: #fca5a5; }
+    .pc-chip.BUY_NOW { background: #ECFDF5; color: #059669; border-color: #a7f3d0; }
+    .pc-chip.FAIR_PRICE { background: #F1F5F9; color: #334155; border-color: #cbd5e1; }
+    .pc-chip.pending, .pc-chip.error { background: #f8fafc; color: #64748b; border-color: #e2e8f0; cursor: default; }
+    .pc-chip.error { cursor: pointer; }
+    .pc-bolt { font-size: 12px; }
+    .pc-label { font-weight: 800; letter-spacing: 0.04em; }
+    .pc-delta { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .pc-caret { font-size: 9px; opacity: 0.7; }
+    .pc-panel { margin-top: 6px; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 10px; background: #ffffff;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06); display: grid; gap: 6px; }
+    .pc-msg { font-weight: 600; }
+    .pc-tiers { display: grid; grid-template-columns: repeat(5, 1fr); text-align: center; gap: 2px; }
+    .pc-tier-price { font-weight: 800; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+    .pc-tier.mid .pc-tier-price, .pc-tier.mid .pc-tier-name { color: #4338ca; }
+    .pc-tier-name { font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em; color: #64748b; }
+    .pc-note { font-size: 11px; color: #64748b; }
+    .pc-btn { font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; justify-self: start; border-radius: 999px; padding: 3px 10px;
+      border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; }
+    .pc-btn:hover { background: #e0e7ff; }
+    .pc-btn[disabled] { opacity: 0.6; cursor: progress; }
+    .pc-skel { display: inline-block; width: 90px; height: 10px; border-radius: 6px;
+      background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%); background-size: 200% 100%; animation: pc-shimmer 1.2s linear infinite; }
+    @keyframes pc-shimmer { to { background-position: -200% 0; } }
+    @media (prefers-reduced-motion: reduce) { .pc-skel { animation: none; } }
+    @container (max-width: 230px) {
+      .pc-tier-price { font-size: 10px; }
+      .pc-tier-name { display: none; }
+    }
+  `;
+
+  function renderChipPanel(data, state) {
+    const { projection, meta } = data;
+    const { tiers, recommendation, confidence, deltaPercentMonth, deltaAmount } = projection;
+    const cells = TIER_ORDER.map(
+      ([key, label]) => `
+        <div class="pc-tier ${key === 'mid' ? 'mid' : ''}">
+          <div class="pc-tier-price">${usd(tiers[key])}</div>
+          <div class="pc-tier-name">${label}</div>
+        </div>`
+    ).join('');
+
+    const sign = deltaAmount > 0 ? '+' : deltaAmount < 0 ? '-' : '';
+    const pct = `${deltaPercentMonth > 0 ? '+' : ''}${deltaPercentMonth.toFixed(1)}%`;
+    const gemini =
+      meta.gemini.status === 'live'
+        ? `Gemini Markets: Live${meta.gemini.summary ? ` — ${escapeHtml(meta.gemini.summary)}` : ''}`
+        : 'Gemini Markets: Offline — heuristic model';
+    const quick = data.light && meta.context.status === 'skipped';
+    const deep = quick
+      ? `<button class="pc-btn" type="button" data-action="deep" ${state.deepLoading ? 'disabled' : ''}>${
+          state.deepLoading ? 'Analyzing…' : 'Deep analysis (uses context.dev)'
+        }</button>`
+      : '';
+
+    return `
+      <div class="pc-panel">
+        <div class="pc-msg">${escapeHtml(recommendation.message)} <span class="pc-note">(${confidence}% confidence)</span></div>
+        <div class="pc-tiers" aria-label="30-day projected price tiers">${cells}</div>
+        <div class="pc-note">30-day: ${pct} (${sign}${usd(Math.abs(deltaAmount))}) · ${gemini}</div>
+        ${quick ? '<div class="pc-note">Quick estimate from the price on this card. Open the product page or run a deep analysis for page-level signals.</div>' : ''}
+        ${deep}
+      </div>`;
+  }
+
+  /**
+   * Compact chip for one search result.
+   * @param {{status: string, data?: any, error?: string, expanded?: boolean, deepLoading?: boolean}} state
+   * @returns {string} Full shadow-root markup including styles.
+   */
+  function renderChip(state) {
+    let chip;
+    let panel = '';
+    if (state.status === 'ready') {
+      const { projection } = state.data;
+      const { recommendation, deltaPercentMonth } = projection;
+      const pct = `${deltaPercentMonth > 0 ? '+' : ''}${deltaPercentMonth.toFixed(1)}%`;
+      chip = `<button class="pc-chip ${escapeHtml(recommendation.action)}" type="button" data-action="toggle" aria-expanded="${Boolean(state.expanded)}"
+        title="PriceOracle 30-day outlook. Click for details.">
+        <span class="pc-bolt" aria-hidden="true">⚡</span><span class="pc-label">${escapeHtml(recommendation.label)}</span>
+        <span class="pc-delta">${pct} / 30d</span><span class="pc-caret" aria-hidden="true">${state.expanded ? '▲' : '▼'}</span></button>`;
+      if (state.expanded) panel = renderChipPanel(state.data, state);
+    } else if (state.status === 'error') {
+      chip = `<button class="pc-chip error" type="button" data-action="retry" title="${escapeHtml(state.error || 'Unavailable')}">
+        <span class="pc-bolt" aria-hidden="true">⚡</span>PriceOracle unavailable — retry</button>`;
+    } else {
+      chip = `<span class="pc-chip pending" role="status"><span class="pc-bolt" aria-hidden="true">⚡</span><span class="pc-skel"></span></span>`;
+    }
+    return `<style>${CHIP_STYLES}</style><div class="pc-wrap">${chip}${panel}</div>`;
+  }
+
+  PO.Widget = { STYLES, CHIP_STYLES, render, renderChip, pinPosition };
 })(globalThis);

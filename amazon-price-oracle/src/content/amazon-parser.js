@@ -1,5 +1,5 @@
 /**
- * Amazon product page parser.
+ * Amazon product page and search-results parser.
  *
  * Classic content script (not a module). Exposes `globalThis.PriceOracle.Parser`.
  * Every extractor tries several selectors because Amazon A/B-tests its markup.
@@ -148,5 +148,79 @@
     };
   }
 
-  PO.Parser = { getAsin, getPrice, getListPrice, getCategory, getTitle, getRating, parsePrice, parseProduct };
+  // -------------------------------------------------------------------------
+  // Search results
+  // -------------------------------------------------------------------------
+
+  const SEARCH_CARD_SELECTOR = 'div[data-component-type="s-search-result"][data-asin]';
+  const SEARCH_PRICE_SELECTORS = [
+    '.a-price:not(.a-text-price) .a-offscreen',
+    '[data-cy="price-recipe"] .a-price:not(.a-text-price) .a-offscreen'
+  ];
+
+  /** Whether the URL is an Amazon search-results page (`/s?k=...`). */
+  function isSearchPage(loc = location) {
+    return /^\/s\/?$/.test(loc.pathname) || /^\/s\/ref=/.test(loc.pathname);
+  }
+
+  /**
+   * Category of a search page: the department dropdown, else the `i` URL
+   * parameter (for example "amazon-devices" becomes "amazon devices"), else the sub-nav.
+   */
+  function getSearchCategory(doc = document, loc = location) {
+    const dropdown = doc.querySelector('#searchDropdownBox');
+    const selected = dropdown?.options?.[dropdown.selectedIndex]?.textContent?.trim();
+    if (selected && !/^all departments$/i.test(selected)) return selected;
+
+    const fromParam = new URLSearchParams(loc.search).get('i');
+    if (fromParam && fromParam !== 'aps') return fromParam.replace(/[-_,]+/g, ' ').trim();
+
+    return doc.querySelector('#nav-subnav')?.getAttribute('data-category') || '';
+  }
+
+  /**
+   * Read one search result card.
+   * @param {Element} card
+   * @returns {{asin: string, price: number, listPrice: number|null, title: string, rating: number|null}|null}
+   *          null when the card has no ASIN or no visible price (for example "See options").
+   */
+  function parseSearchCard(card) {
+    const asin = card.getAttribute('data-asin');
+    if (!isAsin(asin)) return null;
+
+    let price = null;
+    for (const selector of SEARCH_PRICE_SELECTORS) {
+      const el = card.querySelector(selector);
+      price = el && parsePrice(el.textContent);
+      if (price) break;
+    }
+    if (!price) {
+      const box = card.querySelector('.a-price:not(.a-text-price)');
+      price = box ? priceFromParts(box) : null;
+    }
+    if (!price) return null;
+
+    const listText = card.querySelector('.a-price.a-text-price .a-offscreen')?.textContent;
+    const listPrice = parsePrice(listText);
+    const rating = parsePrice(card.querySelector('.a-icon-alt')?.textContent?.match(/(\d(?:\.\d)?)\s*out of/i)?.[1]);
+    const title = (card.querySelector('h2')?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+
+    return {
+      asin: asin.toUpperCase(),
+      price,
+      listPrice: listPrice && listPrice > price ? listPrice : null,
+      title,
+      rating
+    };
+  }
+
+  /** Every result card currently in the page. */
+  function getSearchCards(doc = document) {
+    return [...doc.querySelectorAll(SEARCH_CARD_SELECTOR)];
+  }
+
+  PO.Parser = {
+    getAsin, getPrice, getListPrice, getCategory, getTitle, getRating, parsePrice, parseProduct,
+    isSearchPage, getSearchCategory, parseSearchCard, getSearchCards, SEARCH_CARD_SELECTOR
+  };
 })(globalThis);
