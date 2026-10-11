@@ -335,6 +335,28 @@ try {
     await page.bringToFront();
   });
 
+  await step('remembered prices show up on the card and "Clear price history" empties them', async () => {
+    await opts.bringToFront();
+    await opts.evaluate(() => {
+      const d = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      return chrome.storage.local.set({ price_history: { B0CX23V258: [[now - 10 * d, 189], [now - 6 * d, 199], [now - 2 * d, 179]] } });
+    });
+    await page.bringToFront();
+    await page.goto(PRODUCT, { waitUntil: 'load' });
+    await waitReady(page);
+    const row = await shadow(page, (root) => [...root.querySelectorAll('.po-row')].map((r) => r.textContent.replace(/\s+/g, ' ').trim()).find((t) => /price history/i.test(t)));
+    assert.match(row, /Seen 4 times over 10 days · low \$174\.99 · high \$199\.00/);
+    await opts.bringToFront();
+    await opts.click('#clear-history');
+    await opts.waitForFunction(() => /Price history cleared/.test(document.getElementById('banner').textContent));
+    const left = await opts.evaluate(() => chrome.storage.local.get('price_history'));
+    assert.deepEqual(left, {});
+    await opts.click('#show-product-card'); // leave the switches as they were
+    await opts.click('#show-product-card');
+    await page.bringToFront();
+  });
+
   await step('if Gemini markets is down the card falls back to the heuristic model', async () => {
     stats.marketsDown = true;
     await opts.bringToFront();

@@ -50,6 +50,7 @@ async function refresh() {
     const status = await request({ type: MSG.GET_STATUS });
     $('stat-count').textContent = status.analysisCount;
     $('stat-cache').textContent = status.cachedProducts;
+    $('stat-tracked').textContent = status.trackedProducts;
     setBadge($('ctx-status'), status.contextKeySet, status.usingDefaultContextKey ? 'Default key active' : 'Custom key active');
     const gem = status.lastAnalysis?.geminiStatus;
     setBadge($('gem-status'), gem !== 'offline', gem === 'live' ? 'Live' : gem === 'offline' ? 'Offline' : 'Ready');

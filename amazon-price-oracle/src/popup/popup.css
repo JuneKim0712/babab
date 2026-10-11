@@ -35,7 +35,7 @@ code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-size: 11.
 .pill.BUY_NOW { background: #ECFDF5; color: #059669; border-color: #a7f3d0; }
 .pill.FAIR_PRICE { background: #F1F5F9; color: #334155; border-color: #cbd5e1; }
 
-.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .stat { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; }
 .stat strong { font-size: 20px; }
 .stat span { color: var(--muted); font-size: 11.5px; }

@@ -65,6 +65,7 @@ The image below uses a made-up product page, so you can see the layout:
 | **30-day projected price tiers** | Five prices from **Lowest** (a deep sale) to **Highest** (a shortage or peak), with **Mid** as the expected price in 30 days. The black dot marks today's price on that scale. If it sits left of Mid, today's price is on the cheap side. |
 | **30-Day Delta** | The expected change in dollars and percent. |
 | **context.dev chip** (top right) | Green means product data was fetched. Amber means it couldn't be, and the card is using only what is on the page. |
+| **Your price history** | Appears after you have seen a product twice. It shows how many times PriceOracle has seen the product and the lowest and highest price it saw. After a few days of visits this also makes the projection more accurate. |
 | **Gemini Status** | Green means live Fed-decision and recession odds from Gemini prediction markets were blended in. Amber means they were unreachable and the card used its built-in model alone. |
 
 ### Search results
@@ -90,6 +91,7 @@ You don't need to change anything. To open settings, right-click the PriceOracle
 
 - **Where PriceOracle appears:** two switches, **Product pages** and **Search results**. They take effect immediately, even on Amazon tabs that are already open. Turn one off if you only want the other.
 - **context.dev API key:** a working key is already filled in. Replace it with your own if you have one. **Reset to default** puts the built-in key back.
+- **Local data:** **Clear price history** erases the prices PriceOracle remembered; **Clear context.dev cache** forces fresh product data.
 - **Test Connection:** checks that both services are reachable and that your key is accepted, without using any credits.
 - Click **Save** to keep changes.
 
@@ -109,7 +111,7 @@ Open `chrome://extensions`, find PriceOracle, click **Remove**, and confirm. You
 
 ## 7. Privacy
 
-- Everything runs in your browser. There is no PriceOracle server, no account, no analytics and no tracking.
+- Everything runs in your browser, including the prices PriceOracle remembers for products you view (up to 300 products, 120 days). **Settings > Clear price history** erases them. There is no PriceOracle server, no account, no analytics and no tracking.
 - When you view a product or click **Deep analysis** on a search chip, the extension sends that product's Amazon link to **context.dev** to read its pricing details, and asks **Gemini's public prediction-market API** for macro odds. Neither request contains anything about you.
 - Your context.dev key (the built-in one, or yours if you replace it) stays in your browser's local extension storage.
 - Chrome will say the extension can "read and change data on amazon.com". That is required to draw the card on the page. It does not read other sites.

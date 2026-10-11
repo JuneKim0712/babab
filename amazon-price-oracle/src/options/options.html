@@ -47,6 +47,15 @@
       </div>
     </form>
 
+    <section class="panel" aria-labelledby="data-title">
+      <h2 id="data-title">Local data</h2>
+      <p class="help">PriceOracle remembers the prices it has seen for each product (up to 300 products, 120 days) and uses them to sharpen the projection once there is enough. This stays in your browser and is never sent anywhere.</p>
+      <div class="field">
+        <button type="button" id="clear-history" class="btn ghost">Clear price history</button>
+        <button type="button" id="clear-cache" class="btn ghost">Clear context.dev cache</button>
+      </div>
+    </section>
+
     <section id="results" class="panel results" hidden aria-live="polite">
       <h2>Connection test</h2>
       <ul>

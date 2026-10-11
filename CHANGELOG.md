@@ -5,6 +5,20 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.3.0 - Local price history
+
+- PriceOracle now remembers the prices it has seen per product (product pages and search cards) in
+  `chrome.storage.local`: one point per price change or per 6 hours, 40 points per product, 300 products,
+  120 days. Nothing leaves the browser.
+- Once a product has at least 3 observations over at least 2 days, the observed low / high / average fill the
+  low / high / average signals that context.dev rarely provides (context.dev data always wins). The projection
+  maths is untouched; it simply receives better inputs.
+- The card shows "Your price history: Seen 4 times over 10 days · low $X · high $Y" (also in the expanded chip)
+  once a product has been seen twice.
+- Popup shows a "Tracked prices" counter; Settings has a "Local data" panel with **Clear price history** and
+  **Clear context.dev cache**.
+- 7 new unit tests (dedupe, caps, expiry, thresholds, concurrent writes, eviction) and an end-to-end check.
+
 ## 1.2.1 - Parser hardening and CI
 
 - `parseProduct(doc, loc)` now accepts the location, like `getAsin` already did, so the product parser no

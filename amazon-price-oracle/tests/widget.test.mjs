@@ -75,3 +75,13 @@ test('deep-analysis button only appears for quick (skipped) estimates', () => {
   assert.match(Widget.renderChip({ status: 'ready', data: quick, expanded: true, deepLoading: true }), /disabled/);
   assert.doesNotMatch(Widget.renderChip({ status: 'ready', data: sample(), expanded: true }), /data-action="deep"/);
 });
+
+test('price history row appears only when history exists, in card and chip', () => {
+  const none = sample();
+  assert.doesNotMatch(Widget.render({ status: 'ready', data: none }), /Your price history/);
+  const withHistory = sample({ history: { count: 4, low: 90, high: 120, avg: 100, spanDays: 10 } });
+  assert.match(Widget.render({ status: 'ready', data: withHistory }), /Seen 4 times over 10 days · low \$90\.00 · high \$120\.00/);
+  assert.match(Widget.renderChip({ status: 'ready', data: withHistory, expanded: true }), /Seen 4 times over 10 days/);
+  withHistory.meta.history.spanDays = 0.2;
+  assert.match(Widget.render({ status: 'ready', data: withHistory }), /Seen 4 times · low/);
+});

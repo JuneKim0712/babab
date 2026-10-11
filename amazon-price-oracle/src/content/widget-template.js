@@ -185,6 +185,18 @@
     return `<span class="po-btn err" title="${escapeHtml(gemini.error || '')}">Gemini Markets: Offline — running on heuristic model</span>`;
   }
 
+  /** One-line summary of prices this browser has seen for the product (null until seen twice). */
+  function historyText(history) {
+    if (!history) return '';
+    const span = history.spanDays >= 1 ? ` over ${Math.round(history.spanDays)} day${Math.round(history.spanDays) === 1 ? '' : 's'}` : '';
+    return `Seen ${history.count} times${span} · low ${usd(history.low)} · high ${usd(history.high)}`;
+  }
+
+  function renderHistoryRow(history) {
+    const text = historyText(history);
+    return text ? `<div class="po-row">🕘 <strong>Your price history:</strong> <span>${escapeHtml(text)}</span></div>` : '';
+  }
+
   function renderReady({ projection, meta }) {
     const { tiers, recommendation, deltaPercentMonth, deltaAmount, currentPrice, confidence } = projection;
     const values = TIER_ORDER.map(([key]) => tiers[key]);
@@ -233,6 +245,7 @@
       <div class="po-section po-foot">
         <div class="po-row">📊 <strong>30-Day Delta:</strong> <span class="po-delta ${dir}">${arrow} ${pct} (${expected})</span></div>
         <div class="po-row">🔑 <strong>Gemini Status:</strong> ${renderGeminiStatus(meta.gemini)}</div>
+        ${renderHistoryRow(meta.history)}
         <div class="po-note" title="${escapeHtml(meta.gemini.rationale)}">${escapeHtml(meta.gemini.rationale || '')}</div>
       </div>`;
   }
@@ -350,6 +363,7 @@
         <div class="pc-msg">${escapeHtml(recommendation.message)} <span class="pc-note">(${confidence}% confidence)</span></div>
         <div class="pc-tiers" aria-label="30-day projected price tiers">${cells}</div>
         <div class="pc-note">30-day: ${pct} (${sign}${usd(Math.abs(deltaAmount))}) · ${gemini}</div>
+        ${meta.history ? `<div class="pc-note">${escapeHtml(historyText(meta.history))}</div>` : ''}
         ${quick ? '<div class="pc-note">Quick estimate from the price on this card. Open the product page or run a deep analysis for page-level signals.</div>' : ''}
         ${deep}
       </div>`;

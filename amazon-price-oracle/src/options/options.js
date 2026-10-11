@@ -88,6 +88,20 @@ $('reset-context').addEventListener('click', () => {
 });
 $('form').addEventListener('submit', (e) => save(e).catch((err) => banner(`Could not save: ${err.message}`, 'err')));
 $('test').addEventListener('click', testConnection);
+for (const [id, type, done] of [
+  ['clear-history', MSG.CLEAR_HISTORY, 'Price history cleared.'],
+  ['clear-cache', MSG.CLEAR_CACHE, 'context.dev cache cleared.']
+]) {
+  $(id).addEventListener('click', async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({ type });
+      if (!response?.ok) throw new Error(response?.error || 'Service worker unavailable');
+      banner(done, 'ok');
+    } catch (err) {
+      banner(`Could not clear: ${err.message}`, 'err');
+    }
+  });
+}
 for (const [id, key] of Object.entries(SWITCHES)) {
   $(id).addEventListener('change', async (e) => {
     await chrome.storage.local.set({ [key]: e.target.checked });

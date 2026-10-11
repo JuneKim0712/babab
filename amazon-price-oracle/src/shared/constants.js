@@ -30,6 +30,7 @@ export const STORAGE_KEYS = Object.freeze({
   MACRO_CACHE: 'gemini_macro_cache',
   SHOW_PRODUCT_CARD: 'show_product_card',
   SHOW_SEARCH_CHIPS: 'show_search_chips',
+  PRICE_HISTORY: 'price_history',
   LAST_ANALYSIS: 'last_analysis',
   ANALYSIS_COUNT: 'analysis_count'
 });
@@ -51,5 +52,6 @@ export const MSG = Object.freeze({
   GET_STATUS: 'PO_GET_STATUS',
   TEST_CONNECTION: 'PO_TEST_CONNECTION',
   OPEN_OPTIONS: 'PO_OPEN_OPTIONS',
-  CLEAR_CACHE: 'PO_CLEAR_CACHE'
+  CLEAR_CACHE: 'PO_CLEAR_CACHE',
+  CLEAR_HISTORY: 'PO_CLEAR_HISTORY'
 });

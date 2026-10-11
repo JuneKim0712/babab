@@ -21,6 +21,7 @@ import {
   testContextDevConnection
 } from './context-dev.js';
 import { getPrediction, testGeminiConnection } from './gemini-prediction.js';
+import { clearPriceHistory, countTrackedProducts, historySignals, recordPrice } from './price-history.js';
 import { computeProjection, estimateVolatility } from './projection-engine.js';
 
 /** In-flight analyses keyed by ASIN+price so concurrent renders share one request. */
@@ -81,6 +82,9 @@ async function handleMessage(message) {
     case MSG.OPEN_OPTIONS:
       await chrome.runtime.openOptionsPage();
       return true;
+    case MSG.CLEAR_HISTORY:
+      await clearPriceHistory();
+      return true;
     case MSG.CLEAR_CACHE:
       await clearContextCache();
       await chrome.storage.local.remove(STORAGE_KEYS.MACRO_CACHE);
@@ -122,7 +126,9 @@ async function runPipeline(page) {
     forceRefresh: !light && Boolean(page.forceRefresh),
     cacheOnly: light
   });
-  const signals = { ...context.signals };
+  // Prices this browser has seen before. context.dev data wins; history only fills gaps.
+  const history = await recordPrice(page.asin, page.price).catch(() => null);
+  const signals = { ...historySignals(history), ...context.signals };
 
   const volatility = estimateVolatility({
     category: page.category,
@@ -162,6 +168,7 @@ async function runPipeline(page) {
     light,
     projection,
     meta: {
+      history: history && history.count >= 2 ? history : null,
       context: {
         status: context.status,
         fromCache: context.fromCache,
@@ -216,6 +223,7 @@ async function getStatus() {
     contextKeySet: Boolean(contextKey.key),
     usingDefaultContextKey: contextKey.isDefault,
     cachedProducts: await countCachedProducts(),
+    trackedProducts: await countTrackedProducts(),
     analysisCount: stored[STORAGE_KEYS.ANALYSIS_COUNT] || 0,
     lastAnalysis: stored[STORAGE_KEYS.LAST_ANALYSIS] || null
   };
