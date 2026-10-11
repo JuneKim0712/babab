@@ -71,14 +71,14 @@ function renderLast(last) {
   $('last-when').textContent = `Analyzed ${timeAgo(last.at)}`;
 }
 
-function renderSite(site) {
-  if (site.connected) {
-    setBadge($('site-status'), true, 'Signed in');
-    const count = site.activeAlerts === null ? '' : ` · ${site.activeAlerts} active alert${site.activeAlerts === 1 ? '' : 's'}`;
-    $('site-hint').textContent = `${site.email || 'Your account'}${count}`;
+function renderAccount(account) {
+  if (account.signedIn) {
+    setBadge($('account-status'), true, 'Signed in');
+    const count = account.activeAlerts === null ? '' : ` · ${account.activeAlerts} active alert${account.activeAlerts === 1 ? '' : 's'}`;
+    $('account-hint').textContent = `${account.email || 'Your Google account'}${count}`;
   } else {
-    setBadge($('site-status'), false, site.expired ? 'Sign in again' : site.siteUrl ? 'Signed out' : 'Not connected');
-    $('site-hint').textContent = 'Open Settings to connect your website and set price alerts from product pages.';
+    setBadge($('account-status'), false, account.expired ? 'Sign in again' : 'Signed out');
+    $('account-hint').textContent = 'Open Settings to sign in with Google and set price alerts from product pages.';
   }
 }
 
@@ -96,7 +96,7 @@ async function refresh() {
         ? 'Gemini markets was unreachable on the last check: using the heuristic model only.'
         : 'Live Fed and recession odds from Gemini prediction markets feed every projection. No key required.';
     renderLast(status.lastAnalysis);
-    renderSite(await request({ type: MSG.SITE_STATUS, withAlertCount: true }));
+    renderAccount(await request({ type: MSG.ACCOUNT_STATUS, withAlertCount: true }));
     renderRecent(status.recent);
   } catch (err) {
     $('gem-hint').textContent = `Could not load status: ${err.message}`;

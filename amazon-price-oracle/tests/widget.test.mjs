@@ -92,20 +92,20 @@ test('the card is a labelled region and exposes its busy state', () => {
 });
 
 const alertHtml = (alert) => Widget.render({ status: 'ready', data: sample(), alert });
+const alertDoc = (over = {}) => ({ id: 'al_1', targetPrice: 90, status: 'active', priceAtCreation: 101.5, ...over });
 
 test('no alert section unless the content script supplies an alert view', () => {
   assert.doesNotMatch(Widget.render({ status: 'ready', data: sample() }), /class="po-section po-alert"/);
 });
 
-test('alert section: loading, not configured, signed out, error', () => {
+test('alert section: loading, signed out (with expired wording), error', () => {
   assert.match(alertHtml({ phase: 'loading' }), /Checking your alerts/);
-  const off = alertHtml({ phase: 'not_configured' });
-  assert.match(off, /data-phase="not_configured"/);
-  assert.match(off, /data-action="alert-connect"/);
-  const out = alertHtml({ phase: 'signed_out', expired: true });
-  assert.match(out, /sign-in expired/i);
-  assert.match(out, /Sign in with Google/);
-  assert.match(alertHtml({ phase: 'signed_out' }), /^(?:(?!sign-in expired)[\s\S])*$/i);
+  const out = alertHtml({ phase: 'signed_out' });
+  assert.match(out, /data-action="alert-signin"[^>]*>Sign in with Google</);
+  assert.match(out, /emailed to your Google account address/);
+  assert.doesNotMatch(out, /sign-in expired/i);
+  assert.match(alertHtml({ phase: 'signed_out', expired: true }), /Your sign-in expired\./);
+  assert.match(alertHtml({ phase: 'signed_out', busy: true }), /Waiting for Google/);
   const err = alertHtml({ phase: 'error', error: '<b>boom</b>' });
   assert.match(err, /data-action="alert-retry"/);
   assert.doesNotMatch(err, /<b>boom/);
@@ -116,32 +116,58 @@ test('alert section: no alert yet shows the suggested target and a Set alert but
   assert.match(html, /data-field="alert-target"[^>]*value="94\.50"/);
   assert.match(html, /data-action="alert-save"[^>]*>Set alert</);
   assert.doesNotMatch(html, /alert-toggle|alert-remove/);
-  assert.match(html, /Signed in as a@b\.co/);
+  assert.match(html, /Alerts go to a@b\.co/);
+  assert.match(html, /data-action="alert-account"/);
 });
 
-test('alert section: existing alert offers update, turn off/on and remove', () => {
-  const on = alertHtml({ phase: 'ready', suggested: 94.5, alert: { targetPrice: 90, enabled: true } });
-  assert.match(on, /Alert on/);
-  assert.match(on, /value="90\.00"/);
-  assert.match(on, /alert-toggle"[^>]*>Turn off</);
-  assert.match(on, /alert-remove/);
-  const paused = alertHtml({ phase: 'ready', suggested: 94.5, alert: { targetPrice: 90, enabled: false } });
+test('alert section: creating shows the slow-lookup notice and disables the form', () => {
+  const html = alertHtml({ phase: 'ready', suggested: 94.5, busy: true, creating: true });
+  assert.match(html, /Looking up a product for the first time can take up to a minute/);
+  assert.match(html, /Saving…/);
+  assert.match(html, /data-action="alert-save"[^>]* disabled/);
+});
+
+test('alert section: active alert offers update, Turn off (to paused) and remove', () => {
+  const html = alertHtml({ phase: 'ready', suggested: 94.5, alert: alertDoc() });
+  assert.match(html, /Alert on/);
+  assert.match(html, /value="90\.00"/);
+  assert.match(html, /emailing at or below <strong>\$90\.00<\/strong> · price when set \$101\.50/);
+  assert.match(html, /data-action="alert-toggle" data-next-status="paused"[^>]*>Turn off</);
+  assert.match(html, /alert-remove/);
+});
+
+test('alert section: paused can be turned on; triggered can be re-armed; both set status active', () => {
+  const paused = alertHtml({ phase: 'ready', alert: alertDoc({ status: 'paused' }) });
   assert.match(paused, /Alert paused/);
-  assert.match(paused, /would notify at or below <strong>\$90\.00/);
-  assert.match(paused, /alert-toggle"[^>]*>Turn on</);
+  assert.match(paused, /would email at or below <strong>\$90\.00/);
+  assert.match(paused, /data-next-status="active"[^>]*>Turn on</);
+  const sent = alertHtml({ phase: 'ready', alert: alertDoc({ status: 'triggered' }) });
+  assert.match(sent, /Alert sent/);
+  assert.match(sent, /Re-arm to be told again/);
+  assert.match(sent, /data-next-status="active"[^>]*>Re-arm</);
 });
 
-test('alert section: shows "Target reached" when the price is already at or below an active target', () => {
-  assert.match(alertHtml({ phase: 'ready', alert: { targetPrice: 120, enabled: true } }), /Target reached/);
-  assert.doesNotMatch(alertHtml({ phase: 'ready', alert: { targetPrice: 120, enabled: false } }), /Target reached/);
-  assert.doesNotMatch(alertHtml({ phase: 'ready', alert: { targetPrice: 80, enabled: true } }), /Target reached/);
+test('alert section: an alert without a price target (set on the website) still renders', () => {
+  const html = alertHtml({ phase: 'ready', suggested: 94.5, alert: alertDoc({ targetPrice: null, priceAtCreation: null }) });
+  assert.match(html, /emailing at or below a price drop/);
+  assert.match(html, /value="94\.50"/);
+});
+
+test('alert section: shows "Target reached" only for an active alert whose target is at or above the price', () => {
+  assert.match(alertHtml({ phase: 'ready', alert: alertDoc({ targetPrice: 120 }) }), /Target reached/);
+  assert.doesNotMatch(alertHtml({ phase: 'ready', alert: alertDoc({ targetPrice: 120, status: 'paused' }) }), /Target reached/);
+  assert.doesNotMatch(alertHtml({ phase: 'ready', alert: alertDoc({ targetPrice: 80 }) }), /Target reached/);
 });
 
 test('alert section: busy disables controls and a draft value and error are kept', () => {
-  const html = alertHtml({ phase: 'ready', alert: { targetPrice: 80, enabled: true }, busy: true, draft: '999', error: 'Pick a target below the current price.' });
+  const html = alertHtml({ phase: 'ready', alert: alertDoc({ targetPrice: 80 }), busy: true, draft: '999', error: 'Pick a target below the current price.' });
   assert.equal((html.match(/ disabled/g) || []).length, 4);
   assert.match(html, /value="999"/);
   assert.match(html, /role="alert">Pick a target below/);
+});
+
+test('alert section escapes the account email', () => {
+  assert.doesNotMatch(alertHtml({ phase: 'ready', suggested: 9, email: '<i>x</i>@b.co' }), /<i>x<\/i>/);
 });
 
 test('suggestTarget stays below the current price and above zero', () => {

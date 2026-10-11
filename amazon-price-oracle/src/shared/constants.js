@@ -36,8 +36,8 @@ export const STORAGE_KEYS = Object.freeze({
   LAST_ANALYSIS: 'last_analysis',
   RECENT_ANALYSES: 'recent_analyses',
   ANALYSIS_COUNT: 'analysis_count',
-  SITE_URL: 'site_url',
-  SITE_SESSION: 'site_session'
+  ACCOUNT_SESSION: 'account_session',
+  ACCOUNT_MARKER: 'account_marker'
 });
 
 /** context.dev responses are cached per ASIN for 24 hours to preserve credits. */
@@ -63,21 +63,32 @@ export const MSG = Object.freeze({
   OPEN_OPTIONS: 'PO_OPEN_OPTIONS',
   CLEAR_CACHE: 'PO_CLEAR_CACHE',
   CLEAR_HISTORY: 'PO_CLEAR_HISTORY',
-  SITE_STATUS: 'PO_SITE_STATUS',
-  SITE_CONNECT: 'PO_SITE_CONNECT',
-  SITE_DISCONNECT: 'PO_SITE_DISCONNECT',
+  ACCOUNT_STATUS: 'PO_ACCOUNT_STATUS',
+  ACCOUNT_SIGN_IN: 'PO_ACCOUNT_SIGN_IN',
+  ACCOUNT_SIGN_OUT: 'PO_ACCOUNT_SIGN_OUT',
   ALERT_STATE: 'PO_ALERT_STATE',
-  ALERT_SET: 'PO_ALERT_SET',
+  ALERT_CREATE: 'PO_ALERT_CREATE',
+  ALERT_UPDATE: 'PO_ALERT_UPDATE',
   ALERT_REMOVE: 'PO_ALERT_REMOVE'
 });
 
 /**
- * Website integration: the PriceOracle website owns Google sign-in and price alerts.
- * The address is entered in Settings (there is no sensible shared default). The API the
- * website must expose is specified in docs/WEBSITE_INTEGRATION.md.
+ * PriceOracle alerts live on the website's Firebase project (xylm-306e6). The extension signs in with
+ * Google, exchanges the Google ID token for a Firebase ID token (Identity Toolkit REST, no SDK), and calls
+ * the site's HTTP API from the service worker. Never write to Firestore directly. See
+ * docs/ALERTS_INTEGRATION.md.
  */
-export const DEFAULT_SITE_URL = '';
-/** Give up on a website request after this long so a card never hangs. */
-export const SITE_REQUEST_TIMEOUT_MS = 15000;
-/** The sign-in window is closed by Chrome when the website redirects here. */
-export const SITE_CONNECT_PATH = '/extension/connect';
+export const API_BASE = 'https://xylm-306e6.web.app';
+/** Firebase web API key (public by design; served at /__/firebase/init.json on the hosting site). */
+export const FIREBASE_API_KEY = 'AIzaSyDj97uXv2ETmA-FvwGRV0-_Tn686d2E6L8';
+/** The Google OAuth web client Firebase Auth created for the project (found via accounts:createAuthUri). */
+export const GOOGLE_OAUTH_CLIENT_ID = '754413445676-dsqaqjdq1r5mpla7or2mlgjkg4cnf97m.apps.googleusercontent.com';
+export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+export const IDENTITY_TOOLKIT_URL = 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp';
+export const SECURE_TOKEN_URL = 'https://securetoken.googleapis.com/v1/token';
+/** Normal alert API calls. */
+export const API_TIMEOUT_MS = 20000;
+/** The first lookup of a product can take 13-47 s on the server; allow well over a minute. */
+export const CREATE_ALERT_TIMEOUT_MS = 75000;
+/** Refresh the Firebase ID token this long before it expires. */
+export const TOKEN_REFRESH_MARGIN_MS = 2 * 60 * 1000;

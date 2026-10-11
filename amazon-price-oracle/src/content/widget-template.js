@@ -257,8 +257,9 @@
     '<svg class="po-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5a3.5 3.5 0 0 0-3.5 3.5c0 3-1.5 4-1.5 4h10s-1.5-1-1.5-4A3.5 3.5 0 0 0 8 2.5z"/><path d="M6.6 12.5a1.5 1.5 0 0 0 2.8 0"/></svg>';
 
   /**
-   * Price-alert section of the product card. `alert` is the content script's view of the website link:
-   * {phase: 'loading'|'not_configured'|'signed_out'|'ready'|'error', alert?, email?, suggested?, busy?, error?, expired?}
+   * Price-alert section of the product card. `a` is the content script's view of the signed-in account:
+   * {phase: 'loading'|'signed_out'|'ready'|'error', alert?, email?, suggested?, draft?, busy?, creating?, error?, expired?}
+   * where alert = {targetPrice: number|null, status: 'active'|'paused'|'triggered', priceAtCreation?: number|null}.
    * Returns '' when absent (older callers, search chips).
    */
   function renderAlert(a, currentPrice) {
@@ -271,13 +272,9 @@
       case 'loading':
         body = '<div class="po-alert-text">Checking your alerts…</div>';
         break;
-      case 'not_configured':
-        body = `<div class="po-alert-text">Get notified when this item hits your target price. Connect your PriceOracle website in settings.</div>
-          <div><button class="po-btn" type="button" data-action="alert-connect">Set up alerts</button></div>`;
-        break;
       case 'signed_out':
-        body = `<div class="po-alert-text">${a.expired ? 'Your sign-in expired. ' : ''}Sign in with Google to set a price alert for this item.</div>
-          <div><button class="po-btn primary" type="button" data-action="alert-connect">Sign in with Google</button></div>`;
+        body = `<div class="po-alert-text">${a.expired ? 'Your sign-in expired. ' : ''}Sign in with Google to set a price alert for this item. Alerts are emailed to your Google account address.</div>
+          <div><button class="po-btn primary" type="button" data-action="alert-signin"${disabled}>${a.busy ? 'Waiting for Google…' : 'Sign in with Google'}</button></div>${err}`;
         break;
       case 'error':
         body = `<div class="po-alert-error" role="alert">Price alerts are unavailable: ${escapeHtml(a.error || 'unknown error')}</div>
@@ -285,25 +282,37 @@
         break;
       default: {
         const existing = a.alert;
-        const value = a.draft !== undefined ? a.draft : Number(existing ? existing.targetPrice : a.suggested).toFixed(2);
+        const value = a.draft !== undefined ? a.draft : Number(existing && existing.targetPrice ? existing.targetPrice : a.suggested).toFixed(2);
         const field = `<span class="po-money"><span aria-hidden="true">$</span><input class="po-input" type="text" inputmode="decimal" autocomplete="off" data-field="alert-target" aria-label="Target price in US dollars" value="${escapeHtml(value)}"${disabled} /></span>`;
+        const pending = a.creating
+          ? '<div class="po-alert-text" role="status">Saving your alert. Looking up a product for the first time can take up to a minute.</div>'
+          : '';
         if (!existing) {
-          body = `<div class="po-alert-text">Alert me when the price is at or below:</div>
-            <div class="po-alert-form">${field}<button class="po-btn primary" type="button" data-action="alert-save"${disabled}>Set alert</button></div>${err}`;
+          body = `<div class="po-alert-text">Email me when the price is at or below:</div>
+            <div class="po-alert-form">${field}<button class="po-btn primary" type="button" data-action="alert-save"${disabled}>${a.creating ? 'Saving…' : 'Set alert'}</button></div>${pending}${err}`;
         } else {
-          const reached = existing.enabled && currentPrice <= existing.targetPrice;
-          const label = reached ? 'Target reached' : existing.enabled ? 'Alert on' : 'Alert paused';
-          const detail = existing.enabled
-            ? `notifying at or below <strong>${usd(existing.targetPrice)}</strong>`
-            : `would notify at or below <strong>${usd(existing.targetPrice)}</strong>`;
-          body = `<div class="po-alert-status"><span class="po-chip ${reached ? 'ok' : existing.enabled ? '' : 'warn'}"><i class="po-dot"></i>${label}</span><span class="po-alert-text">${detail}</span></div>
+          const { status } = existing;
+          const hasTarget = Boolean(existing.targetPrice);
+          const reached = status === 'active' && hasTarget && currentPrice <= existing.targetPrice;
+          const label = status === 'triggered' ? 'Alert sent' : status === 'paused' ? 'Alert paused' : reached ? 'Target reached' : 'Alert on';
+          const chipClass = status === 'paused' ? 'warn' : reached || status === 'triggered' ? 'ok' : '';
+          const goal = hasTarget ? `<strong>${usd(existing.targetPrice)}</strong>` : 'a price drop';
+          const detail =
+            status === 'triggered'
+              ? `emailed when the price reached ${goal}. Re-arm to be told again`
+              : status === 'paused'
+                ? `would email at or below ${goal}`
+                : `emailing at or below ${goal}`;
+          const toggle = status === 'active' ? ['Turn off', 'paused'] : [status === 'triggered' ? 'Re-arm' : 'Turn on', 'active'];
+          const created = existing.priceAtCreation ? ` · price when set ${usd(existing.priceAtCreation)}` : '';
+          body = `<div class="po-alert-status"><span class="po-chip ${chipClass}"><i class="po-dot"></i>${label}</span><span class="po-alert-text">${detail}${created}</span></div>
             <div class="po-alert-form">${field}
               <button class="po-btn" type="button" data-action="alert-save"${disabled}>Update</button>
-              <button class="po-btn" type="button" data-action="alert-toggle"${disabled}>${existing.enabled ? 'Turn off' : 'Turn on'}</button>
+              <button class="po-btn" type="button" data-action="alert-toggle" data-next-status="${toggle[1]}"${disabled}>${toggle[0]}</button>
               <button class="po-link" type="button" data-action="alert-remove"${disabled}>Remove</button>
             </div>${err}`;
         }
-        if (a.email) body += `<div class="po-note">Signed in as ${escapeHtml(a.email)} · <button class="po-link" type="button" data-action="alert-connect">Account settings</button></div>`;
+        if (a.email) body += `<div class="po-note">Alerts go to ${escapeHtml(a.email)} · <button class="po-link" type="button" data-action="alert-account">Account settings</button></div>`;
       }
     }
     return `<div class="po-section po-alert" data-phase="${escapeHtml(a.phase)}">${head}${body}</div>`;

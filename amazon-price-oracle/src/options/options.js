@@ -20,35 +20,33 @@ function banner(text, kind) {
   if (kind === 'ok') bannerTimer = setTimeout(() => (el.hidden = true), 5000);
 }
 
-function renderSite(status) {
-  const state = $('site-state');
-  $('site-disconnect').hidden = !status.connected;
-  $('site-connect').textContent = status.connected ? 'Switch account' : 'Sign in with Google';
-  if (status.siteUrl && !$('site-url').value) $('site-url').value = status.siteUrl;
-  if (status.connected) {
+function renderAccount(status) {
+  $('account-signout').hidden = !status.signedIn;
+  $('account-signin').textContent = status.signedIn ? 'Switch account' : 'Sign in with Google';
+  const state = $('account-state');
+  if (status.signedIn) {
     const count = status.activeAlerts === null ? '' : ` ${status.activeAlerts} active alert${status.activeAlerts === 1 ? '' : 's'}.`;
-    state.textContent = `Signed in as ${status.email || 'your account'}.${count} Product pages now show the price alert controls.`;
+    state.textContent = `Signed in as ${status.email || 'your Google account'}.${count} Alerts are emailed to this address.`;
   } else if (status.expired) {
-    state.textContent = 'Your sign-in expired. Sign in again to keep using price alerts.';
+    state.textContent = 'Your sign-in expired. Sign in again to manage price alerts.';
   } else {
-    state.textContent = 'Not connected. Product pages show a "Set up alerts" prompt until you sign in.';
+    state.textContent = 'Not signed in. Product pages show a "Sign in with Google" prompt in the price alert section.';
   }
 }
 
-async function loadSite() {
-  const response = await chrome.runtime.sendMessage({ type: MSG.SITE_STATUS, withAlertCount: true });
-  if (response?.ok) renderSite(response.data);
+async function loadAccount() {
+  const response = await chrome.runtime.sendMessage({ type: MSG.ACCOUNT_STATUS, withAlertCount: true });
+  if (response?.ok) renderAccount(response.data);
 }
 
-async function connectSite() {
-  const button = $('site-connect');
+async function signIn() {
+  const button = $('account-signin');
   button.disabled = true;
-  banner('Opening the website sign-in window…', 'info');
+  banner('Opening Google sign-in…', 'info');
   try {
-    const response = await chrome.runtime.sendMessage({ type: MSG.SITE_CONNECT, siteUrl: $('site-url').value });
+    const response = await chrome.runtime.sendMessage({ type: MSG.ACCOUNT_SIGN_IN });
     if (!response?.ok) throw new Error(response?.error || 'Service worker unavailable');
-    $('site-url').value = response.data.siteUrl;
-    await loadSite();
+    await loadAccount();
     banner('Signed in. You can now set price alerts on product pages.', 'ok');
   } catch (err) {
     banner(`Sign-in failed: ${err.message}`, 'err');
@@ -57,14 +55,14 @@ async function connectSite() {
   }
 }
 
-async function disconnectSite() {
-  const response = await chrome.runtime.sendMessage({ type: MSG.SITE_DISCONNECT });
-  if (response?.ok) renderSite(response.data);
-  banner('Signed out of the website. Your alerts stay saved there.', 'ok');
+async function signOut() {
+  const response = await chrome.runtime.sendMessage({ type: MSG.ACCOUNT_SIGN_OUT });
+  if (response?.ok) renderAccount({ ...response.data, activeAlerts: null });
+  banner('Signed out. Your alerts stay saved on the website.', 'ok');
 }
 
 async function load() {
-  loadSite().catch(() => {});
+  loadAccount().catch(() => {});
   const stored = await chrome.storage.local.get(STORAGE_KEYS.CONTEXT_KEY);
   $('context-key').value = (stored[STORAGE_KEYS.CONTEXT_KEY] || '').trim() || DEFAULT_CONTEXT_DEV_KEY;
   const shown = await chrome.storage.local.get(Object.keys(SWITCHES).map((id) => SWITCHES[id]));
@@ -132,8 +130,8 @@ $('reset-context').addEventListener('click', () => {
 });
 $('form').addEventListener('submit', (e) => save(e).catch((err) => banner(`Could not save: ${err.message}`, 'err')));
 $('test').addEventListener('click', testConnection);
-$('site-connect').addEventListener('click', connectSite);
-$('site-disconnect').addEventListener('click', () => disconnectSite().catch((err) => banner(`Could not sign out: ${err.message}`, 'err')));
+$('account-signin').addEventListener('click', signIn);
+$('account-signout').addEventListener('click', () => signOut().catch((err) => banner(`Could not sign out: ${err.message}`, 'err')));
 for (const [id, type, done] of [
   ['clear-history', MSG.CLEAR_HISTORY, 'Price history cleared.'],
   ['clear-cache', MSG.CLEAR_CACHE, 'context.dev cache cleared.']

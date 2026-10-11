@@ -24,7 +24,8 @@ import {
 import { getPrediction, testGeminiConnection } from './gemini-prediction.js';
 import { addRecent } from './recent.js';
 import { clearPriceHistory, countTrackedProducts, historySignals, recordPrice } from './price-history.js';
-import { connectSite, disconnectSite, getAlertState, getSiteStatus, removeAlert, setAlert } from './site-link.js';
+import { getAccountStatus, signIn, signOut } from './account.js';
+import { countActiveAlerts, createAlert, getAlertState, removeAlert, updateAlert } from './alerts-client.js';
 import { computeProjection, estimateVolatility } from './projection-engine.js';
 
 /** In-flight analyses keyed by ASIN+price so concurrent renders share one request. */
@@ -41,7 +42,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.runtime.onInstalled.addListener((details) => {
   // The optional Gemini API key was removed; delete any key saved by older versions.
-  chrome.storage.local.remove('gemini_api_key');
+  chrome.storage.local.remove(['gemini_api_key', 'site_url', 'site_session']);
   if (details.reason === 'update') {
     // Tabs opened before an update still run the previous (now orphaned) scripts.
     injectIntoOpenAmazonTabs();
@@ -85,18 +86,20 @@ async function handleMessage(message) {
     case MSG.OPEN_OPTIONS:
       await chrome.runtime.openOptionsPage();
       return true;
-    case MSG.SITE_STATUS:
-      return getSiteStatus({ withAlertCount: Boolean(message.withAlertCount) });
-    case MSG.SITE_CONNECT:
-      return connectSite(message.siteUrl);
-    case MSG.SITE_DISCONNECT:
-      return disconnectSite();
+    case MSG.ACCOUNT_STATUS:
+      return accountStatus(Boolean(message.withAlertCount));
+    case MSG.ACCOUNT_SIGN_IN:
+      return signIn();
+    case MSG.ACCOUNT_SIGN_OUT:
+      return signOut();
     case MSG.ALERT_STATE:
       return getAlertState(String(message.asin || '').toUpperCase());
-    case MSG.ALERT_SET:
-      return setAlert({ ...message.payload, asin: String(message.payload?.asin || '').toUpperCase() });
+    case MSG.ALERT_CREATE:
+      return createAlert({ ...message.payload, asin: String(message.payload?.asin || '').toUpperCase() });
+    case MSG.ALERT_UPDATE:
+      return updateAlert({ ...message.payload, asin: String(message.payload?.asin || '').toUpperCase() });
     case MSG.ALERT_REMOVE:
-      return removeAlert(String(message.asin || '').toUpperCase());
+      return removeAlert(message.payload || {});
     case MSG.CLEAR_HISTORY:
       await clearPriceHistory();
       return true;
@@ -239,6 +242,20 @@ async function recordLastAnalysis(result) {
     },
     [STORAGE_KEYS.ANALYSIS_COUNT]: count + 1
   });
+}
+
+/** Google account for Settings and the popup, optionally with the number of active alerts. */
+async function accountStatus(withAlertCount) {
+  const status = await getAccountStatus();
+  status.activeAlerts = null;
+  if (withAlertCount && status.signedIn) {
+    try {
+      status.activeAlerts = await countActiveAlerts();
+    } catch (err) {
+      if (err.code === 'signed_out') return { ...(await getAccountStatus()), activeAlerts: null };
+    }
+  }
+  return status;
 }
 
 /** Snapshot used by the popup. Never exposes the key value itself. */

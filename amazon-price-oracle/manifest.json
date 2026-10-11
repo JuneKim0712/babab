@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAj+jI65FFYNrA1Ne2B91P2ByG9OjsbfbuXAfyM6eN5yxFt+v/relxbuSY5itGA+yXL/9PNz7SDAhnMCvvD2EOAC2F3EqXB2VLonjsfUiy63VbfHZDW4l1nyIGzKBLLSI1/A8UPuL2woRQ4cI9Mq0MTLQMzN+IseHthtXFASA46RIvcC+muBxs6zB/dj0mM1yZdgMu54j+P43479oEgFYgvjZygFn8eF1+naLFUo4mw8O66hieDzB6OTWVtQnAq0Eu/ih1ffOsXL6JkZ953xG5LaacIVi4DYiohCmVSF759xSbUwS9nNQypX4G7I5ZZGtrNiP0PIiZ3n7dFX2CgKhexQIDAQAB",
   "name": "PriceOracle — Amazon Buy Timing & Price Projection",
   "short_name": "PriceOracle",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Buy Timing & 30-day Price Projection for Amazon product pages and search results: WAIT, BUY NOW or FAIR PRICE with 5-tier price quantiles.",
   "minimum_chrome_version": "109",
   "icons": {
@@ -10,12 +11,19 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["storage", "scripting", "identity"],
+  "permissions": [
+    "storage",
+    "scripting",
+    "identity"
+  ],
   "host_permissions": [
     "https://api.context.dev/*",
     "https://api.gemini.com/*",
     "https://www.amazon.com/*",
-    "https://amazon.com/*"
+    "https://amazon.com/*",
+    "https://xylm-306e6.web.app/*",
+    "https://identitytoolkit.googleapis.com/*",
+    "https://securetoken.googleapis.com/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.js",
@@ -23,7 +31,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.amazon.com/*", "https://amazon.com/*"],
+      "matches": [
+        "https://www.amazon.com/*",
+        "https://amazon.com/*"
+      ],
       "js": [
         "src/content/messaging.js",
         "src/content/amazon-parser.js",

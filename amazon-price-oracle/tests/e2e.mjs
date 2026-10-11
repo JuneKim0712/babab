@@ -35,7 +35,7 @@ const browser = await puppeteer.launch({
     '--no-sandbox',
     `--disable-extensions-except=${root}`,
     `--load-extension=${root}`,
-    `--host-resolver-rules=MAP www.amazon.com 127.0.0.1:${PORT}, MAP api.context.dev 127.0.0.1:${PORT}, MAP api.gemini.com 127.0.0.1:${PORT}, MAP baba.test 127.0.0.1:${PORT}`,
+    `--host-resolver-rules=MAP www.amazon.com 127.0.0.1:${PORT}, MAP api.context.dev 127.0.0.1:${PORT}, MAP api.gemini.com 127.0.0.1:${PORT}, MAP xylm-306e6.web.app 127.0.0.1:${PORT}, MAP accounts.google.com 127.0.0.1:${PORT}, MAP identitytoolkit.googleapis.com 127.0.0.1:${PORT}, MAP securetoken.googleapis.com 127.0.0.1:${PORT}`,
     '--ignore-certificate-errors',
     '--window-size=1280,1000'
   ]
@@ -53,12 +53,6 @@ async function step(name, fn) {
     console.log(`  FAIL ${name}\n       ${err.message}`);
   }
 }
-
-/** Flip a switch on the mock website, e.g. `tokenValid=0`. */
-const fetchControl = (query) => {
-  const [key, value] = query.split('=');
-  stats.site[key] = value === '1';
-};
 
 /** Read text/attributes from inside the widget's shadow root. */
 const shadow = (page, fn, arg) =>
@@ -400,6 +394,7 @@ try {
 
     stats.contextStatus = 0;
     await opts.bringToFront();
+    await opts.evaluate(() => { document.getElementById('res-context').textContent = ''; }); // drop the previous run's result
     await opts.click('#test');
     await opts.waitForFunction(() => /Connected/.test(document.getElementById('res-context').textContent), { timeout: 20000 });
     assert.deepEqual(await opts.evaluate(() => chrome.storage.local.get('context_pause')), {});
@@ -410,12 +405,20 @@ try {
     assert.equal(stats.extract, before + 2);
   });
 
-  // ---- Website integration: Google sign-in via the website + price alerts --------------------------------
+  // ---- Google sign-in (Firebase) + price alerts through the website API --------------------------------
+  const EXPECTED_EXT_ID = 'gnckobeflimeehgaaliiibfliebjapbe';
+  const site = stats.site;
   const waitAlert = (pg, phase) =>
     pg.waitForFunction(
       (ph) => document.getElementById('price-oracle-host')?.shadowRoot?.querySelector(`.po-alert[data-phase="${ph}"]`),
       { timeout: 15000 },
       phase
+    );
+  const waitAlertText = (pg, re, timeout = 15000) =>
+    pg.waitForFunction(
+      (src) => new RegExp(src, 'i').test(document.getElementById('price-oracle-host')?.shadowRoot?.querySelector('.po-alert')?.textContent || ''),
+      { timeout },
+      re.source
     );
   const alertText = (pg) => shadow(pg, (root) => root.querySelector('.po-alert')?.textContent.replace(/\s+/g, ' ').trim());
   const clickAlert = (pg, action) => shadow(pg, (root, a) => root.querySelector(`[data-action="${a}"]`).click(), action);
@@ -425,161 +428,240 @@ try {
     await page.goto(PRODUCT, { waitUntil: 'load' });
     await waitReady(page);
   };
-  const siteStats = () => stats.site;
+  const alertsOnServer = () => Object.values(site.alerts).filter((a) => a.targetValue === 'B0CX23V258');
+  const storedSession = () => opts.evaluate(() => chrome.storage.local.get('account_session').then((s) => s.account_session));
 
-  await step('without a connected website the card offers to set up alerts (no request is made)', async () => {
+  await step('the extension id is stable (manifest key), so one Google redirect URI can be registered', async () => {
+    assert.equal(extId, EXPECTED_EXT_ID);
+  });
+
+  await step('signed out: the card offers Google sign-in and makes no network request', async () => {
     await reloadProduct();
-    await waitAlert(page, 'not_configured');
-    assert.match(await alertText(page), /Connect your PriceOracle website/);
-    assert.equal(siteStats().connects, 0);
+    await waitAlert(page, 'signed_out');
+    assert.match(await alertText(page), /Sign in with Google to set a price alert/);
+    assert.equal(site.signIns + site.lists + site.refreshes, 0);
   });
 
-  await step('Settings: Sign in with Google opens the website bridge and stores a session', async () => {
+  await step('card: Sign in with Google runs Google OAuth, exchanges the token with Firebase and shows the account', async () => {
+    await clickAlert(page, 'alert-signin');
+    await waitAlert(page, 'ready');
+    const p = site.lastAuthParams;
+    assert.equal(p.response_type, 'id_token');
+    assert.equal(p.scope, 'openid email profile');
+    assert.equal(p.client_id, '754413445676-dsqaqjdq1r5mpla7or2mlgjkg4cnf97m.apps.googleusercontent.com');
+    assert.ok(p.nonce.length >= 16 && p.state.length >= 16);
+    assert.equal(p.redirect_uri, `https://${EXPECTED_EXT_ID}.chromiumapp.org/`);
+    assert.equal(site.signIns, 1);
+    const session = await storedSession();
+    assert.equal(session.idToken, 'fbid_1');
+    assert.equal(session.refreshToken, 'rt_1');
+    assert.equal(session.email, 'june@example.com');
+    assert.match(await alertText(page), /Alerts go to june@example\.com/);
+    assert.equal(site.lists, 1);
+    assert.match(site.lastAuthorization, /^Bearer fbid_1$/);
+  });
+
+  await step('Settings shows the signed-in account and an alert count', async () => {
     await opts.bringToFront();
-    await opts.click('#site-url', { clickCount: 3 });
-    await opts.type('#site-url', 'baba.test');
-    await opts.click('#site-connect');
-    await opts.waitForFunction(() => /Signed in as june@example\.com/.test(document.getElementById('site-state').textContent), { timeout: 20000 });
-    assert.equal(siteStats().connects, 1);
-    assert.match(siteStats().lastRedirectUri, /^https:\/\/[a-p]{32}\.chromiumapp\.org\/site$/);
-    assert.equal(await opts.$eval('#site-url', (el) => el.value), 'https://baba.test');
-    assert.equal(await opts.$eval('#site-disconnect', (el) => el.hidden), false);
-    const stored = await opts.evaluate(() => chrome.storage.local.get(['site_url', 'site_session']));
-    assert.equal(stored.site_url, 'https://baba.test');
-    assert.equal(stored.site_session.token, 'po_site_token_123');
+    await opts.reload({ waitUntil: 'load' });
+    await opts.waitForFunction(() => /Signed in as june@example\.com\. 0 active alerts/.test(document.getElementById('account-state').textContent), { timeout: 10000 });
+    assert.equal(await opts.$eval('#account-signout', (el) => el.hidden), false);
   });
 
-  await step('a refused website sign-in shows an error and keeps the previous session', async () => {
-    await fetchControl('refuseLogin=1');
-    await opts.click('#site-connect');
-    await opts.waitForFunction(() => /Sign-in failed: The website refused sign-in/.test(document.getElementById('banner').textContent), { timeout: 20000 });
-    await fetchControl('refuseLogin=0');
-    assert.equal((await opts.evaluate(() => chrome.storage.local.get('site_session'))).site_session.token, 'po_site_token_123');
-  });
-
-  await step('product card: set a price alert; the website receives asin, title, target and price', async () => {
+  await step('create: explicit click only; pending state, then the stored alert comes from the server', async () => {
     await reloadProduct();
     await waitAlert(page, 'ready');
+    assert.equal(site.creates, 0); // loading the page never creates anything
+    site.createDelayMs = 1500;
     const suggested = await shadow(page, (root) => root.querySelector('[data-field="alert-target"]').value);
     assert.match(suggested, /^\d+\.\d\d$/);
     assert.ok(Number(suggested) < 174.99);
     await typeTarget(page, '150');
     await clickAlert(page, 'alert-save');
-    await page.waitForFunction(() => /Alert on/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
-    const put = siteStats().lastPut;
-    assert.equal(put.asin, 'B0CX23V258');
-    assert.equal(put.targetPrice, 150);
-    assert.equal(put.currentPrice, 174.99);
-    assert.equal(put.enabled, true);
-    assert.equal(put.url, 'https://www.amazon.com/dp/B0CX23V258');
-    assert.ok(put.title.length > 3);
-    assert.match(await alertText(page), /notifying at or below \$150\.00/);
+    await waitAlertText(page, /Saving your alert\. Looking up a product for the first time can take up to a minute/, 5000);
+    assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-save"]').disabled), true);
+    await waitAlertText(page, /Alert on/);
+    site.createDelayMs = 0;
+    assert.deepEqual(site.lastCreate, { email: 'june@example.com', targetType: 'asin', targetValue: 'https://www.amazon.com/dp/B0CX23V258', targetPrice: 150 });
+    assert.equal(site.creates, 1);
+    assert.equal(site.lastAuthorization, 'Bearer fbid_1');
+    assert.equal(alertsOnServer()[0].userId, 'uid_june');
+    assert.match(await alertText(page), /emailing at or below \$150\.00 · price when set \$174\.99/);
     await page.screenshot({ path: path.join(shots, '07-price-alert.png'), clip: { x: 0, y: 200, width: 1100, height: 780 } });
   });
 
-  await step('a target at or above the current price is rejected without calling the website', async () => {
-    const puts = siteStats().puts;
-    await typeTarget(page, '999');
-    await clickAlert(page, 'alert-save');
-    await page.waitForFunction(() => /below the current price/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
-    assert.equal(siteStats().puts, puts);
-    assert.equal(await shadow(page, (root) => root.querySelector('[data-field="alert-target"]').value), '999');
-    await typeTarget(page, 'abc');
-    await clickAlert(page, 'alert-save');
-    await page.waitForFunction(() => /above \$0/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
-    assert.equal(siteStats().puts, puts);
+  await step('invalid targets are rejected before any request is made', async () => {
+    const calls = site.creates + site.updates;
+    for (const [value, message] of [['999', /below the current price/], ['abc', /above \$0/], ['', /above \$0/]]) {
+      await typeTarget(page, value);
+      await clickAlert(page, 'alert-save');
+      await waitAlertText(page, message, 10000);
+    }
+    assert.equal(site.creates + site.updates, calls);
   });
 
-  await step('the alert can be turned off and on again, and is remembered across reloads', async () => {
-    await typeTarget(page, '150.00');
-    await clickAlert(page, 'alert-toggle');
-    await page.waitForFunction(() => /Alert paused/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
-    assert.equal(siteStats().lastPut.enabled, false);
-    assert.equal(siteStats().alerts.B0CX23V258.enabled, false);
-    await reloadProduct();
-    await waitAlert(page, 'ready');
-    assert.match(await alertText(page), /Alert paused.*would notify at or below \$150\.00/);
-    assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-toggle"]').textContent), 'Turn on');
-    await clickAlert(page, 'alert-toggle');
-    await page.waitForFunction(() => /Alert on/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
-    assert.equal(siteStats().alerts.B0CX23V258.enabled, true);
-  });
-
-  await step('updating the target and removing the alert are sent to the website', async () => {
-    await typeTarget(page, '140');
-    await clickAlert(page, 'alert-save');
-    await page.waitForFunction(() => /\$140\.00/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
-    assert.equal(siteStats().alerts.B0CX23V258.targetPrice, 140);
-    await clickAlert(page, 'alert-remove');
-    await page.waitForFunction(() => /Alert me when the price is at or below/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
-    assert.equal(siteStats().deletes, 1);
-    assert.deepEqual(Object.keys(siteStats().alerts), []);
-  });
-
-  await step('typing a price in the alert field does not trigger Amazon keyboard shortcuts and Enter saves', async () => {
+  await step('changing the target updates the alert (Enter key too) without leaking keys to Amazon', async () => {
     await page.evaluate(() => {
       window.__leakedKeys = 0;
       document.addEventListener('keydown', () => window.__leakedKeys++);
-    });
-    await page.evaluate(() => {
       const input = document.getElementById('price-oracle-host').shadowRoot.querySelector('[data-field="alert-target"]');
       input.focus();
       input.select();
     });
     await page.keyboard.type('145');
-    assert.equal(await page.evaluate(() => window.__leakedKeys), 0); // nothing typed in the field reaches Amazon's page
+    assert.equal(await page.evaluate(() => window.__leakedKeys), 0);
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => /Alert on/.test(document.getElementById('price-oracle-host').shadowRoot.querySelector('.po-alert').textContent), { timeout: 10000 });
-    assert.equal(siteStats().alerts.B0CX23V258.targetPrice, 145);
+    await waitAlertText(page, /emailing at or below \$145\.00/);
+    assert.deepEqual(site.lastUpdate, { action: 'update', alertId: alertsOnServer()[0].id, targetPrice: 145 });
+    assert.equal(site.creates, 1);
   });
 
-  await step('popup shows the signed-in website account and active alert count', async () => {
+  await step('Turn off pauses (status only), survives a reload, and Turn on re-arms', async () => {
+    await clickAlert(page, 'alert-toggle');
+    await waitAlertText(page, /Alert paused/);
+    assert.deepEqual(site.lastUpdate, { action: 'update', alertId: alertsOnServer()[0].id, status: 'paused' });
+    assert.equal(alertsOnServer()[0].status, 'paused');
+    await reloadProduct();
+    await waitAlert(page, 'ready');
+    assert.match(await alertText(page), /Alert paused.*would email at or below \$145\.00/);
+    assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-toggle"]').textContent), 'Turn on');
+    await clickAlert(page, 'alert-toggle');
+    await waitAlertText(page, /Alert on/);
+    assert.equal(site.lastUpdate.status, 'active');
+    assert.equal(alertsOnServer()[0].status, 'active');
+  });
+
+  await step('a triggered alert shows "Alert sent" and can be re-armed', async () => {
+    alertsOnServer()[0].status = 'triggered';
+    await reloadProduct();
+    await waitAlert(page, 'ready');
+    assert.match(await alertText(page), /Alert sent.*Re-arm to be told again/);
+    assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-toggle"]').textContent), 'Re-arm');
+    await clickAlert(page, 'alert-toggle');
+    await waitAlertText(page, /Alert on/);
+    assert.equal(alertsOnServer()[0].status, 'active');
+  });
+
+  await step('Remove deletes it on the server', async () => {
+    await clickAlert(page, 'alert-remove');
+    await waitAlertText(page, /Email me when the price is at or below/);
+    assert.deepEqual(site.lastDelete, { action: 'delete', alertId: site.lastUpdate.alertId });
+    assert.equal(alertsOnServer().length, 0);
+  });
+
+  await step('an alert that already exists is updated, never duplicated (each create costs credits)', async () => {
+    site.alerts.al_seed = {
+      id: 'al_seed', email: 'june@example.com', userId: 'uid_june', targetType: 'asin', targetValue: 'B0CX23V258', retailer: 'amazon',
+      productTitle: 'Seeded', currentPriceAtCreation: 170, targetPrice: 120, status: 'paused', createdAt: new Date().toISOString()
+    };
+    const creates = site.creates;
+    await typeTarget(page, '130'); // the open card does not know about the seeded alert yet
+    await clickAlert(page, 'alert-save');
+    await waitAlertText(page, /Alert on.*\$130\.00/);
+    assert.equal(site.creates, creates);
+    assert.equal(site.alerts.al_seed.targetPrice, 130);
+    assert.equal(site.alerts.al_seed.status, 'active');
+    delete site.alerts.al_seed;
+  });
+
+  await step('a failed lookup (422) shows the server message and saves nothing', async () => {
+    await reloadProduct();
+    await waitAlert(page, 'ready');
+    site.create422 = true;
+    await typeTarget(page, '150');
+    await clickAlert(page, 'alert-save');
+    await waitAlertText(page, /Could not read a live price for this product\. Nothing was saved/);
+    assert.equal(alertsOnServer().length, 0);
+    assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-save"]').disabled), false);
+    site.create422 = false;
+  });
+
+  await step('a rejected ID token is refreshed once and the request retried', async () => {
+    const refreshes = site.refreshes;
+    site.validTokens.clear();
+    await reloadProduct();
+    await waitAlert(page, 'ready');
+    assert.equal(site.refreshes, refreshes + 1);
+    assert.match(site.lastAuthorization, /^Bearer fbid_\d+$/);
+    assert.notEqual(site.lastAuthorization, 'Bearer fbid_1');
+  });
+
+  await step('an ID token about to expire is refreshed before the request', async () => {
+    const refreshes = site.refreshes;
+    await opts.evaluate(() => chrome.storage.local.get('account_session').then((s) => chrome.storage.local.set({ account_session: { ...s.account_session, expiresAt: Date.now() + 20000 } })));
+    await reloadProduct();
+    await waitAlert(page, 'ready');
+    assert.equal(site.refreshes, refreshes + 1);
+    assert.ok((await storedSession()).expiresAt > Date.now() + 30 * 60 * 1000);
+  });
+
+  await step('a revoked refresh token ends the session with an "expired" prompt', async () => {
+    site.refreshRevoked = true;
+    site.validTokens.clear();
+    await reloadProduct();
+    await waitAlert(page, 'signed_out');
+    assert.match(await alertText(page), /Your sign-in expired\. Sign in with Google/);
+    const session = await storedSession();
+    assert.equal(session.refreshToken, undefined);
+    assert.equal(session.idToken, undefined);
+    site.refreshRevoked = false;
+  });
+
+  await step('a refused Google sign-in is reported and leaves the card signed out', async () => {
+    site.refuseLogin = true;
+    await clickAlert(page, 'alert-signin');
+    await waitAlertText(page, /Google refused sign-in: access_denied/);
+    assert.equal(await shadow(page, (root) => root.querySelector('.po-alert').dataset.phase), 'signed_out');
+    site.refuseLogin = false;
+    site.idpFail = true;
+    await clickAlert(page, 'alert-signin');
+    await waitAlertText(page, /Firebase sign-in failed: INVALID_IDP_RESPONSE/);
+    site.idpFail = false;
+  });
+
+  await step('signing in from Settings updates the open product page without a reload', async () => {
+    await opts.bringToFront();
+    await opts.click('#account-signin');
+    await opts.waitForFunction(() => /Signed in as june@example\.com/.test(document.getElementById('account-state').textContent), { timeout: 20000 });
+    await page.bringToFront();
+    await waitAlert(page, 'ready');
+  });
+
+  await step('popup shows the signed-in account and active alert count', async () => {
+    site.alerts.al_seed2 = {
+      id: 'al_seed2', email: 'june@example.com', userId: 'uid_june', targetType: 'asin', targetValue: 'B0SEARCH01', retailer: 'amazon',
+      productTitle: 'Other', currentPriceAtCreation: 50, targetPrice: 40, status: 'active', createdAt: new Date().toISOString()
+    };
+    site.alerts.al_bb = { ...site.alerts.al_seed2, id: 'al_bb', retailer: 'bestbuy', targetType: 'sku', targetValue: '6447382' };
     const pop = await browser.newPage();
     await pop.setViewport({ width: 360, height: 760 });
     await pop.goto(`chrome-extension://${extId}/src/popup/popup.html`);
-    await pop.waitForFunction(() => /Signed in/.test(document.getElementById('site-status').textContent), { timeout: 10000 });
-    assert.match(await pop.$eval('#site-hint', (el) => el.textContent), /june@example\.com · 1 active alert$/);
+    await pop.waitForFunction(() => /Signed in/.test(document.getElementById('account-status').textContent), { timeout: 10000 });
+    assert.match(await pop.$eval('#account-hint', (el) => el.textContent), /june@example\.com · 1 active alert$/); // Best Buy alerts are not counted
     await pop.close();
+    delete site.alerts.al_seed2;
+    delete site.alerts.al_bb;
     await page.bringToFront();
   });
 
-  await step('an expired website token sends the card back to "Sign in with Google"', async () => {
-    await fetchControl('tokenValid=0');
-    await reloadProduct();
-    await waitAlert(page, 'signed_out');
-    assert.match(await alertText(page), /sign-in expired.*Sign in with Google/);
-    assert.equal((await opts.evaluate(() => chrome.storage.local.get('site_session'))).site_session.token, undefined);
-    await fetchControl('tokenValid=1');
+  await step('the website is only called from the service worker, with host permission and no CORS headers', async () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+    assert.ok(manifest.host_permissions.includes('https://xylm-306e6.web.app/*'));
+    const contentScripts = manifest.content_scripts.flatMap((c) => c.js).map((f) => fs.readFileSync(path.join(root, f), 'utf8')).join('\n');
+    assert.doesNotMatch(contentScripts, /xylm-306e6|fetch\(/);
   });
 
-  await step('signing in from Settings updates an open product page without a reload', async () => {
+  await step('Sign out in Settings drops the tokens and the card asks to sign in again', async () => {
     await opts.bringToFront();
-    await opts.click('#site-connect');
-    await opts.waitForFunction(() => /Signed in as/.test(document.getElementById('site-state').textContent), { timeout: 20000 });
+    await opts.click('#account-signout');
+    await opts.waitForFunction(() => /Not signed in/.test(document.getElementById('account-state').textContent), { timeout: 10000 });
+    assert.deepEqual(await opts.evaluate(() => chrome.storage.local.get('account_session')), {});
+    assert.equal(await opts.$eval('#account-signout', (el) => el.hidden), true);
     await page.bringToFront();
-    await waitAlert(page, 'ready');
-    assert.equal(await shadow(page, (root) => root.querySelector('[data-field="alert-target"]').value), '145.00');
-  });
-
-  await step('a website without CORS headers is reported with a clear message', async () => {
-    await fetchControl('corsBroken=1');
-    await reloadProduct();
-    await waitAlert(page, 'error');
-    assert.match(await alertText(page), /allow cross-origin requests/);
-    await fetchControl('corsBroken=0');
-  });
-
-  await step('Sign out in Settings removes the token and hides alert controls', async () => {
-    await opts.bringToFront();
-    await opts.click('#site-disconnect');
-    await opts.waitForFunction(() => /Not connected|Signed out/.test(document.getElementById('banner').textContent + document.getElementById('site-state').textContent), { timeout: 10000 });
-    assert.deepEqual(await opts.evaluate(() => chrome.storage.local.get('site_session')), {});
-    assert.equal(await opts.$eval('#site-disconnect', (el) => el.hidden), true);
-    await reloadProduct();
     await waitAlert(page, 'signed_out');
     await opts.bringToFront();
-    await opts.click('#site-connect'); // leave the account connected for the popup check below
-    await opts.waitForFunction(() => /Signed in as/.test(document.getElementById('site-state').textContent), { timeout: 20000 });
+    await opts.click('#account-signin'); // leave the account signed in for the popup screenshot
+    await opts.waitForFunction(() => /Signed in as/.test(document.getElementById('account-state').textContent), { timeout: 20000 });
   });
 
   const popup = await browser.newPage();

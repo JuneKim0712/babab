@@ -67,4 +67,12 @@ test('message names mirrored in content.js exist in shared constants', async () 
 test('the extension asks only for the permissions it needs', () => {
   assert.deepEqual([...manifest.permissions].sort(), ['identity', 'scripting', 'storage']);
   assert.ok(!manifest.host_permissions.some((h) => h === '<all_urls>' || h === 'https://*/*'), 'no broad host permissions');
+  assert.ok(manifest.host_permissions.includes('https://xylm-306e6.web.app/*'), 'the alerts API needs host permission (it sends no CORS headers)');
+});
+
+test('manifest key pins the extension id used for the Google redirect URI', async () => {
+  const crypto = await import('node:crypto');
+  const hex = crypto.createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex').slice(0, 32);
+  const id = [...hex].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
+  assert.equal(id, 'gnckobeflimeehgaaliiibfliebjapbe');
 });

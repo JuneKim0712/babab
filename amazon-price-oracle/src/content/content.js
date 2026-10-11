@@ -20,8 +20,10 @@
   const MSG = {
     ANALYZE_PRODUCT: 'PO_ANALYZE_PRODUCT',
     OPEN_OPTIONS: 'PO_OPEN_OPTIONS',
+    ACCOUNT_SIGN_IN: 'PO_ACCOUNT_SIGN_IN',
     ALERT_STATE: 'PO_ALERT_STATE',
-    ALERT_SET: 'PO_ALERT_SET',
+    ALERT_CREATE: 'PO_ALERT_CREATE',
+    ALERT_UPDATE: 'PO_ALERT_UPDATE',
     ALERT_REMOVE: 'PO_ALERT_REMOVE'
   };
   const HOST_ID = 'price-oracle-host';
@@ -94,10 +96,11 @@
     if (!target) return;
     const action = target.getAttribute('data-action');
     if (action === 'retry' && lastParsed) analyze(lastParsed, true);
-    else if (action === 'alert-connect') sendMessage({ type: MSG.OPEN_OPTIONS }).catch(() => {});
+    else if (action === 'alert-account') sendMessage({ type: MSG.OPEN_OPTIONS }).catch(() => {});
+    else if (action === 'alert-signin') signIn();
     else if (action === 'alert-retry') loadAlert();
-    else if (action === 'alert-save') saveAlert(false);
-    else if (action === 'alert-toggle') saveAlert(true);
+    else if (action === 'alert-save') saveAlert();
+    else if (action === 'alert-toggle') toggleAlert(target.getAttribute('data-next-status'));
     else if (action === 'alert-remove') removeAlert();
   }
 
@@ -105,7 +108,7 @@
   function onShadowKey(event) {
     if (!(event.target instanceof Element) || !event.target.matches('[data-field="alert-target"]')) return;
     event.stopPropagation();
-    if (event.type === 'keydown' && event.key === 'Enter') saveAlert(false);
+    if (event.type === 'keydown' && event.key === 'Enter') saveAlert();
   }
 
   // -------------------------------------------------------------------------
@@ -141,53 +144,80 @@
     paint(cardState);
   }
 
-  async function saveAlert(toggle) {
-    if (!lastParsed || alertView?.phase !== 'ready' || alertView.busy) return;
-    const existing = alertView.alert;
-    const typed = readTarget();
-    setAlertView({ busy: true, error: '', draft: typed });
+  /** Run `work` with the alert section disabled; map "signed out" errors back to the sign-in prompt. */
+  async function withBusy(patch, work, apply) {
+    if (!lastParsed || alertView?.busy) return;
     const seq = requestSeq;
+    setAlertView({ busy: true, error: '', ...patch });
     try {
-      const alert = await sendMessage({
-        type: MSG.ALERT_SET,
-        payload: {
-          asin: lastParsed.asin,
-          title: lastParsed.title,
-          currentPrice: lastParsed.price,
-          targetPrice: toggle ? existing.targetPrice : typed,
-          enabled: toggle ? !existing.enabled : existing ? existing.enabled : true,
-          toggleOnly: Boolean(toggle)
-        }
-      });
+      const result = await work();
       if (seq !== requestSeq) return;
-      setAlertView({ busy: false, alert, draft: undefined });
+      apply(result);
     } catch (err) {
       if (seq !== requestSeq) return;
-      if (isSignedOutError(err)) return loadAlert();
-      setAlertView({ busy: false, error: err && err.message });
+      if (isSignedOutError(err)) {
+        loadAlert();
+        return;
+      }
+      setAlertView({ busy: false, creating: false, error: err && err.message });
     }
+  }
+
+  async function signIn() {
+    if (!lastParsed || alertView?.busy) return;
+    const seq = requestSeq;
+    setAlertView({ busy: true, error: '' });
+    try {
+      await sendMessage({ type: MSG.ACCOUNT_SIGN_IN });
+      if (seq === requestSeq) await loadAlert();
+    } catch (err) {
+      if (seq === requestSeq) setAlertView({ busy: false, error: err && err.message });
+    }
+  }
+
+  /** Create (first time) or update the alert. Only ever runs from an explicit click. */
+  async function saveAlert() {
+    if (alertView?.phase !== 'ready') return;
+    const existing = alertView.alert;
+    const typed = readTarget();
+    const base = { asin: lastParsed.asin, currentPrice: lastParsed.price, targetPrice: typed };
+    await withBusy(
+      { draft: typed, creating: !existing },
+      () =>
+        existing
+          ? sendMessage({ type: MSG.ALERT_UPDATE, payload: { ...base, alertId: existing.id } })
+          : sendMessage({ type: MSG.ALERT_CREATE, payload: base }),
+      (alert) => setAlertView({ busy: false, creating: false, alert, draft: undefined })
+    );
+  }
+
+  /** Pause ("paused") or re-arm ("active") without touching the target. */
+  async function toggleAlert(nextStatus) {
+    if (alertView?.phase !== 'ready' || !alertView.alert || (nextStatus !== 'active' && nextStatus !== 'paused')) return;
+    const { id } = alertView.alert;
+    const typed = readTarget();
+    await withBusy(
+      { draft: typed },
+      () => sendMessage({ type: MSG.ALERT_UPDATE, payload: { asin: lastParsed.asin, alertId: id, status: nextStatus } }),
+      (alert) => setAlertView({ busy: false, alert, draft: undefined })
+    );
   }
 
   async function removeAlert() {
-    if (!lastParsed || alertView?.phase !== 'ready' || alertView.busy) return;
-    setAlertView({ busy: true, error: '' });
-    const seq = requestSeq;
-    try {
-      await sendMessage({ type: MSG.ALERT_REMOVE, asin: lastParsed.asin });
-      if (seq !== requestSeq) return;
-      setAlertView({ busy: false, alert: null, draft: undefined });
-    } catch (err) {
-      if (seq !== requestSeq) return;
-      if (isSignedOutError(err)) return loadAlert();
-      setAlertView({ busy: false, error: err && err.message });
-    }
+    if (alertView?.phase !== 'ready' || !alertView.alert) return;
+    const { id } = alertView.alert;
+    await withBusy(
+      {},
+      () => sendMessage({ type: MSG.ALERT_REMOVE, payload: { alertId: id } }),
+      () => setAlertView({ busy: false, alert: null, draft: undefined })
+    );
   }
 
-  /** Signing in (or out) from Settings in another tab updates open product pages. */
-  function watchSiteSession() {
+  /** Signing in or out (here, in Settings or the popup) updates open product pages. */
+  function watchAccount() {
     try {
       chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === 'local' && ('site_session' in changes || 'site_url' in changes) && enabled) loadAlert();
+        if (area === 'local' && 'account_marker' in changes && enabled && !alertView?.busy) loadAlert();
       });
     } catch {
       /* extension was reloaded; nothing to watch */
@@ -300,7 +330,7 @@
     if (!isProductPage()) return;
     window.addEventListener('popstate', scheduleRefresh);
     window.addEventListener('pageshow', scheduleRefresh);
-    watchSiteSession();
+    watchAccount();
     PO.settings.watch('productCard', (on) => (on ? enable() : disable()));
     if (await PO.settings.get('productCard')) enable();
   }

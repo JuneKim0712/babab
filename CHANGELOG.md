@@ -5,27 +5,28 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
-## 1.6.0 - Google sign-in and price alerts via the website
+## 1.7.0 - Price alerts through the PriceOracle website API (Google + Firebase)
 
-The projection, thresholds, inputs and fallbacks are unchanged. Everything new is optional and invisible until
-a website address is entered in Settings. The website side is specified in
-[docs/WEBSITE_INTEGRATION.md](docs/WEBSITE_INTEGRATION.md).
+Replaces the 1.6.0 draft, which targeted a hypothetical website API, with the real one documented for
+project `xylm-306e6`. The projection, thresholds, inputs and fallbacks are unchanged. Details and the one
+setup step (a Google redirect URI) are in [docs/ALERTS_INTEGRATION.md](docs/ALERTS_INTEGRATION.md).
 
-- Settings: new "Website and price alerts" panel. **Sign in with Google** opens the website's sign-in bridge in
-  a Chrome auth window (`chrome.identity.launchWebAuthFlow`); the website does the Google sign-in and hands back
-  its own token. The extension needs no Google client ID and never sees a Google credential.
-- Product card: new **Price alert** section. Set a target price (pre-filled with a sensible suggestion), update
-  it, **Turn off** / **Turn on**, or **Remove**. Alerts are stored on the website (one per user and item), so the
-  website sees them too. Shows **Target reached** when an active alert's target is at or above the price on screen.
-- Clear states for every case: website not connected, signed out or expired, request error, website without
-  CORS, busy, and invalid targets (must be above $0 and below today's price).
-- Typing in the target field no longer triggers Amazon keyboard shortcuts; Enter saves.
-- Popup: "Website alerts" row with the signed-in account and active alert count.
-- Open product pages update immediately after signing in or out from Settings.
-- New `identity` permission (no install warning). No host permission for the website: it must send CORS headers.
-- The token is kept in `chrome.storage.local`, sent only to the configured website origin, dropped on any 401.
-- Mock website in `test-page/serve.mjs`; 13 new e2e steps; new unit tests for the pure helpers and the card
-  section; guards for mirrored message names and the permission list.
+- Sign in with Google from the card or Settings: Google OAuth (`chrome.identity`), exchanged for a Firebase ID
+  token over the Identity Toolkit REST API. No Firebase SDK, no remote code. Tokens refresh automatically.
+- Product card **Price alert** section: set a target (emailed to your Google address), update it, **Turn off**
+  / **Turn on**, **Re-arm** after it fired, or **Remove**. Shows "Alert sent" for triggered alerts and the price
+  at the time the alert was set, as recorded by the server.
+- Alerts are created only on an explicit click, with a pending state for the slow first lookup (timeout 75 s),
+  never twice for the same item (an existing alert is updated instead), and server errors such as a 422 are
+  shown verbatim.
+- All traffic goes through the service worker (the site sends no CORS headers); no Firestore access.
+- Extension id is now fixed by a `key` in the manifest so a single Google redirect URI can be registered.
+- Popup: "Price alerts" row with the account and active alert count (Amazon product alerts only).
+- 401 handling: refresh once and retry; a revoked refresh token shows "Your sign-in expired".
+- New host permissions: the site, `identitytoolkit.googleapis.com`, `securetoken.googleapis.com`.
+- Removed the website-address field and `site_*` storage from 1.6.0 (cleaned up on update).
+- New mock of Google OAuth, Firebase Auth and the site API in `test-page/serve.mjs`; 21 e2e steps and new unit
+  tests (token handling, request bodies, alert matching, card states).
 
 ## 1.5.0 - "Ledger" visual redesign
 
