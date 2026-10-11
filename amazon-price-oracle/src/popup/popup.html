@@ -16,7 +16,7 @@
     <section class="card" aria-labelledby="last-title">
       <h2 id="last-title" class="label">Last analyzed product</h2>
       <div id="last-empty" class="empty" hidden>
-        Open an Amazon product page (for example <code>amazon.com/dp/B0CX23V258</code>) and the timing widget will appear under the price.
+        Open an Amazon product page and the timing widget appears under the price. On search results, each product gets a quick verdict chip.
       </div>
       <div id="last-body" hidden>
         <div id="last-product" class="product-title"></div>
@@ -37,7 +37,7 @@
     </section>
 
     <section class="card" aria-labelledby="keys-title">
-      <h2 id="keys-title" class="label">API key status</h2>
+      <h2 id="keys-title" class="label">Connections</h2>
       <div class="key-row">
         <span>context.dev</span>
         <span id="ctx-status" class="badge"></span>
@@ -46,31 +46,12 @@
         <span>Gemini markets</span>
         <span id="gem-status" class="badge"></span>
       </div>
-      <div class="key-row">
-        <span>Gemini API key</span>
-        <span id="gem-key-status" class="badge"></span>
-      </div>
       <p id="gem-hint" class="muted small"></p>
       <div class="actions">
-        <button id="add-gemini" class="btn primary" type="button">Gemini key (optional)</button>
-        <button id="clear-cache" class="btn" type="button">Clear cache</button>
+        <button id="clear-cache" class="btn primary" type="button">Clear cache</button>
       </div>
     </section>
   </main>
-
-  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
-    <div class="modal-card">
-      <h2 id="modal-title">Gemini API key</h2>
-      <p class="muted small">Optional. Gemini prediction-market data is public, so PriceOracle works without a key. If you save one it is stored only in this browser (<code>chrome.storage.local</code>) and sent as <code>X-GEMINI-APIKEY</code>.</p>
-      <label for="gemini-input" class="label">Gemini API key</label>
-      <input id="gemini-input" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" />
-      <div id="modal-msg" class="msg" role="status" hidden></div>
-      <div class="actions end">
-        <button id="modal-cancel" class="btn" type="button">Cancel</button>
-        <button id="modal-save" class="btn primary" type="button">Save</button>
-      </div>
-    </div>
-  </div>
 
   <script type="module" src="popup.js"></script>
 </body>

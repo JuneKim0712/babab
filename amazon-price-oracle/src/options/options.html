@@ -10,7 +10,7 @@
   <main class="page">
     <header>
       <h1><span aria-hidden="true">⚡</span> PriceOracle settings</h1>
-      <p class="lead">Keys are stored locally in <code>chrome.storage.local</code> and only ever sent to their own API from the extension's background service worker.</p>
+      <p class="lead">Your context.dev key is stored locally in <code>chrome.storage.local</code> and only ever sent to context.dev from the extension's background service worker. Gemini prediction-market data is public and needs no key.</p>
     </header>
 
     <div id="banner" class="banner" role="status" hidden></div>
@@ -27,17 +27,6 @@
         </div>
       </section>
 
-      <section class="panel">
-        <h2>Gemini API key <span class="tag">optional</span></h2>
-        <p class="help">PriceOracle reads live Fed-decision and recession odds from <a href="https://developer.gemini.com/prediction-markets-spec/markets" target="_blank" rel="noopener noreferrer">Gemini prediction markets</a>. That market data is public, so <strong>no key is needed</strong>. If you save one it is sent in the <code>X-GEMINI-APIKEY</code> header and kept only in <code>chrome.storage.local</code>.</p>
-        <label for="gemini-key">API key</label>
-        <div class="field">
-          <input id="gemini-key" type="password" spellcheck="false" autocomplete="off" placeholder="Optional" />
-          <button type="button" class="btn ghost" data-toggle="gemini-key">Show</button>
-          <button type="button" id="clear-gemini" class="btn ghost">Remove</button>
-        </div>
-        <p id="gemini-state" class="state"></p>
-      </section>
 
       <div class="actions">
         <button type="submit" id="save" class="btn primary">Save</button>

@@ -1,7 +1,7 @@
 /**
- * Popup: quick stats, API key status and a modal to add the Gemini key.
+ * Popup: quick stats, connection status and cache controls.
  */
-import { MSG, STORAGE_KEYS } from '../shared/constants.js';
+import { MSG } from '../shared/constants.js';
 
 const $ = (id) => document.getElementById(id);
 const usd = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
@@ -53,58 +53,17 @@ async function refresh() {
     setBadge($('ctx-status'), status.contextKeySet, status.usingDefaultContextKey ? 'Default key active' : 'Custom key active');
     const gem = status.lastAnalysis?.geminiStatus;
     setBadge($('gem-status'), gem !== 'offline', gem === 'live' ? 'Live' : gem === 'offline' ? 'Offline' : 'Ready');
-    setBadge($('gem-key-status'), true, status.geminiKeySet ? 'Saved' : 'Not needed');
     $('gem-hint').textContent =
       gem === 'offline'
         ? 'Gemini markets was unreachable on the last check: using the heuristic model only.'
         : 'Live Fed and recession odds from Gemini prediction markets feed every projection. No key required.';
-    $('add-gemini').textContent = status.geminiKeySet ? 'Update Gemini key' : 'Gemini key (optional)';
     renderLast(status.lastAnalysis);
   } catch (err) {
     $('gem-hint').textContent = `Could not load status: ${err.message}`;
   }
 }
 
-function showMessage(text, kind) {
-  const msg = $('modal-msg');
-  msg.hidden = !text;
-  msg.textContent = text;
-  msg.className = `msg ${kind || ''}`;
-}
-
-function openModal() {
-  showMessage('', '');
-  $('gemini-input').value = '';
-  $('modal').hidden = false;
-  $('gemini-input').focus();
-}
-
-function closeModal() {
-  $('modal').hidden = true;
-  $('gemini-input').value = '';
-}
-
-async function saveGeminiKey() {
-  const value = $('gemini-input').value.trim();
-  if (!value) {
-    showMessage('Paste a key, or open Settings to remove the saved one.', 'err');
-    return;
-  }
-  await chrome.storage.local.set({ [STORAGE_KEYS.GEMINI_KEY]: value });
-  await chrome.storage.local.remove(STORAGE_KEYS.MACRO_CACHE);
-  showMessage('Saved.', 'ok');
-  await refresh();
-  setTimeout(closeModal, 1100);
-}
-
 $('open-options').addEventListener('click', () => chrome.runtime.openOptionsPage());
-$('add-gemini').addEventListener('click', openModal);
-$('modal-cancel').addEventListener('click', closeModal);
-$('modal-save').addEventListener('click', () => saveGeminiKey().catch((e) => showMessage(e.message, 'err')));
-$('gemini-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') $('modal-save').click();
-  if (e.key === 'Escape') closeModal();
-});
 $('clear-cache').addEventListener('click', async () => {
   await request({ type: MSG.CLEAR_CACHE });
   await refresh();

@@ -54,10 +54,3 @@ code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-size: 11.
 .btn.primary:hover { background: #3730a3; }
 .btn:focus-visible, .icon-btn:focus-visible, input:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
 
-.modal { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: grid; place-items: center; padding: 14px; }
-.modal-card { background: #fff; border-radius: 14px; padding: 16px; width: 100%; box-shadow: 0 12px 40px rgba(15, 23, 42, 0.3); }
-.modal-card h2 { margin: 0 0 6px; font-size: 15px; }
-input { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #cbd5e1; font: inherit; }
-.msg { margin-top: 8px; padding: 7px 10px; border-radius: 8px; font-size: 12px; }
-.msg.ok { background: #ecfdf5; color: #047857; }
-.msg.err { background: #fef2f2; color: #b91c1c; }

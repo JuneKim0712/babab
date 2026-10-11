@@ -17,15 +17,14 @@ export const CONTEXT_DEV_ENDPOINT = 'https://api.context.dev/v1/web/scrape';
 export const CONTEXT_DEV_AUTH_CHECK_URL = 'https://api.context.dev/v1/org/logs?limit=1';
 
 /**
- * Gemini prediction markets (gemini.com). The public market-data endpoints need
- * no API key; an optional key is sent in the X-GEMINI-APIKEY header.
+ * Gemini prediction markets (gemini.com). The market-data endpoints are public
+ * and need no API key.
  * Docs: https://developer.gemini.com/prediction-markets-spec/markets
  */
 export const GEMINI_MARKETS_BASE = 'https://api.gemini.com/v1/prediction-markets';
 
 /** chrome.storage.local keys. */
 export const STORAGE_KEYS = Object.freeze({
-  GEMINI_KEY: 'gemini_api_key',
   CONTEXT_KEY: 'context_dev_api_key',
   CONTEXT_CACHE: 'context_cache',
   MACRO_CACHE: 'gemini_macro_cache',
