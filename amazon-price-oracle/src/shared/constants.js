@@ -28,6 +28,7 @@ export const STORAGE_KEYS = Object.freeze({
   CONTEXT_KEY: 'context_dev_api_key',
   CONTEXT_CACHE: 'context_cache',
   MACRO_CACHE: 'gemini_macro_cache',
+  MACRO_BACKOFF: 'gemini_macro_backoff',
   SHOW_PRODUCT_CARD: 'show_product_card',
   SHOW_SEARCH_CHIPS: 'show_search_chips',
   PRICE_HISTORY: 'price_history',
@@ -45,6 +46,8 @@ export const CONTEXT_ERROR_TTL_MS = 15 * 60 * 1000;
 export const CONTEXT_PAUSE_MS = 30 * 60 * 1000;
 /** Macro odds from Gemini markets move slowly; refresh at most every 3 hours. */
 export const MACRO_CACHE_TTL_MS = 3 * 60 * 60 * 1000;
+/** After a failed Gemini markets request, do not try again for this long (falls back instantly). */
+export const MACRO_BACKOFF_MS = 5 * 60 * 1000;
 /** If Gemini markets is unreachable, reuse a cached reading up to this old. */
 export const MACRO_STALE_MAX_MS = 24 * 60 * 60 * 1000;
 /** Max ASIN entries kept in the context cache. */

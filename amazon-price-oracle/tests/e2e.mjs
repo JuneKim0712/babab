@@ -380,7 +380,7 @@ try {
         text
       );
     await opts.bringToFront();
-    await opts.evaluate(() => chrome.storage.local.remove('context_cache'));
+    await opts.evaluate(() => chrome.storage.local.remove(['context_cache', 'gemini_macro_backoff']));
     stats.contextStatus = 401;
     const before = stats.extract;
     await page.bringToFront();

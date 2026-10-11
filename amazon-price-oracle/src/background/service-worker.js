@@ -89,7 +89,7 @@ async function handleMessage(message) {
       return true;
     case MSG.CLEAR_CACHE:
       await clearContextCache();
-      await chrome.storage.local.remove(STORAGE_KEYS.MACRO_CACHE);
+      await chrome.storage.local.remove([STORAGE_KEYS.MACRO_CACHE, STORAGE_KEYS.MACRO_BACKOFF]);
       return true;
     default:
       throw new Error(`Unknown message type: ${message.type}`);

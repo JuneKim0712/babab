@@ -300,3 +300,45 @@ test('an expired pause lets requests through again; stale cache is still served 
   assert.equal((await fetchProductContext('B0STALE001')).status, 'connected');
   assert.equal(called, true);
 });
+
+test('after Gemini markets fails, later lookups fail fast without another request', async () => {
+  const store = stubChrome();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return { ok: false, status: 503, json: async () => ({}) };
+  };
+  await assert.rejects(() => getMacroSignal(new Date('2026-01-15')));
+  assert.equal(calls, 1);
+  assert.ok(store.gemini_macro_backoff.until > Date.now());
+
+  const started = Date.now();
+  await assert.rejects(() => getMacroSignal(new Date('2026-01-15')), /not retrying until/);
+  assert.equal(calls, 1);
+  assert.ok(Date.now() - started < 50);
+});
+
+test('during the backoff a stale reading (up to 24 h old) is still used', async () => {
+  const store = stubChrome();
+  store.gemini_macro_cache = { fetchedAt: Date.now() - 5 * 3600e3, sentimentMultiplier: 1.01, discountProbabilityBoost: 0.01, summary: 'x' };
+  store.gemini_macro_backoff = { until: Date.now() + 60000, reason: 'down' };
+  globalThis.fetch = async () => {
+    throw new Error('must not be called during the backoff');
+  };
+  const macro = await getMacroSignal(new Date('2026-01-15'));
+  assert.equal(macro.stale, true);
+  assert.equal(macro.sentimentMultiplier, 1.01);
+});
+
+test('the backoff ends and a successful refresh clears it', async () => {
+  const store = stubChrome();
+  store.gemini_macro_backoff = { until: Date.now() - 1, reason: 'old outage' };
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ data: [{ ticker: 'RECESSION26', title: 'Recession?', expiryDate: '2099-02-01T00:00:00.000Z', contracts: [{ label: 'Yes', prices: { bestBid: '0.03', bestAsk: '0.05' } }] }] })
+  });
+  const macro = await getMacroSignal(new Date('2026-01-15'));
+  assert.ok(macro.sentimentMultiplier);
+  assert.equal(store.gemini_macro_backoff, undefined);
+});

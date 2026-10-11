@@ -5,6 +5,14 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.4.2 - Fast fallback when Gemini markets is down
+
+- After a failed Gemini markets request, the extension waits 5 minutes before trying again. During that time
+  cards fall back to the heuristic model (or a stale reading up to 24 h old) immediately, instead of each
+  analysis waiting out a 15 s timeout. The first successful request, Save in Settings, Clear cache, or
+  Test Connection ends the backoff early.
+- 3 new unit tests (fail fast, stale reading used, backoff ends and clears).
+
 ## 1.4.1 - Parser fallbacks for newer Amazon markup
 
 - Product page: recognises the newer price containers (`#apex_offerDisplay_desktop`,

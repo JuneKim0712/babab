@@ -18,6 +18,7 @@
  */
 import {
   GEMINI_MARKETS_BASE,
+  MACRO_BACKOFF_MS,
   MACRO_CACHE_TTL_MS,
   MACRO_STALE_MAX_MS,
   STORAGE_KEYS
@@ -114,6 +115,13 @@ export async function getMacroSignal(now = new Date()) {
   const age = cached ? Date.now() - cached.fetchedAt : Infinity;
   if (cached && age < MACRO_CACHE_TTL_MS) return cached;
 
+  // Gemini was just unreachable: answer from stale data or fail at once instead of waiting for another timeout.
+  const backoff = (await chrome.storage.local.get(STORAGE_KEYS.MACRO_BACKOFF))[STORAGE_KEYS.MACRO_BACKOFF];
+  if (backoff && backoff.until > Date.now()) {
+    if (cached && age < MACRO_STALE_MAX_MS) return { ...cached, stale: true };
+    throw new Error(`${backoff.reason} (not retrying until ${new Date(backoff.until).toLocaleTimeString()})`);
+  }
+
   // A search page analyses dozens of cards at once; they must share one network call.
   if (!macroInflight) {
     macroInflight = refreshMacroSignal(now).finally(() => {
@@ -123,6 +131,9 @@ export async function getMacroSignal(now = new Date()) {
   try {
     return await macroInflight;
   } catch (err) {
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.MACRO_BACKOFF]: { until: Date.now() + MACRO_BACKOFF_MS, reason: err instanceof Error ? err.message : String(err) }
+    });
     if (cached && age < MACRO_STALE_MAX_MS) return { ...cached, stale: true };
     throw err;
   }
@@ -134,6 +145,7 @@ async function refreshMacroSignal(now) {
   const events = await fetchEconomicsEvents();
   const macro = computeMacroSignal(events, now);
   await chrome.storage.local.set({ [STORAGE_KEYS.MACRO_CACHE]: macro });
+  await chrome.storage.local.remove(STORAGE_KEYS.MACRO_BACKOFF);
   return macro;
 }
 
@@ -242,6 +254,7 @@ export async function testGeminiConnection() {
   try {
     const body = await geminiGet(`${GEMINI_MARKETS_BASE}/categories`);
     const count = Array.isArray(body?.categories) ? body.categories.length : 0;
+    await chrome.storage.local.remove(STORAGE_KEYS.MACRO_BACKOFF);
     return {
       ok: true,
       message: `Connected — Gemini prediction markets reachable (${count} categories). Market data is public; no key needed.`

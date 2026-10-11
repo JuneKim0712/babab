@@ -237,6 +237,7 @@ deltaPercentMonth <= -4.0  ->  WAIT        >= +4.0  ->  BUY NOW        otherwise
 | --- | --- |
 | `context_dev_api_key` | User override of the context.dev key. Absent means "use the shipped default". |
 | `context_cache` | `{ [ASIN]: { fetchedAt, signals, error? } }`, 24 h TTL, max 200 entries. |
+| `gemini_macro_backoff` | `{until, reason}`: set for 5 minutes after a failed Gemini markets request so later analyses fall back instantly. Cleared by a successful fetch, Save, Clear cache or Test Connection. |
 | `gemini_macro_cache` | Last macro signal, 3 h TTL, reused up to 24 h if Gemini is unreachable (`stale: true`). |
 | `show_product_card`, `show_search_chips` | Options switches. Absent means on; `false` turns that surface off. Content scripts watch `chrome.storage.onChanged` and add or remove the UI live. |
 | `context_pause` | `{until, reason}`: circuit breaker set after a 401/402/403/429 from context.dev; no calls until `until` (30 min) or until settings are saved / Test Connection succeeds. |
