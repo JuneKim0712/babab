@@ -19,6 +19,9 @@ import {
   CONTEXT_DEV_ENDPOINT,
   CONTEXT_ERROR_TTL_MS,
   CONTEXT_PAUSE_MS,
+  CONTEXT_RATE_LIMIT_MAX_PAUSE_MS,
+  CONTEXT_RATE_LIMIT_MIN_PAUSE_MS,
+  CONTEXT_RATE_LIMIT_RETRY_MS,
   DEFAULT_CONTEXT_DEV_KEY,
   STORAGE_KEYS
 } from '../shared/constants.js';
@@ -121,7 +124,7 @@ export async function fetchProductContext(asin, { forceRefresh = false, cacheOnl
     const message = err instanceof Error ? err.message : String(err);
     const fetchedAt = Date.now();
     if (err && err.pause) {
-      await setPause(message);
+      await setPause(message, err.pauseMs);
       if (entry && !entry.error) return { status: 'cached', fromCache: true, fetchedAt: entry.fetchedAt, signals: entry.signals, error: message };
       return { status: 'error', fromCache: false, fetchedAt, signals: {}, error: message };
     }
@@ -140,8 +143,8 @@ async function getPause() {
   return pause && pause.until > Date.now() ? pause : null;
 }
 
-async function setPause(reason) {
-  await chrome.storage.local.set({ [STORAGE_KEYS.CONTEXT_PAUSE]: { until: Date.now() + CONTEXT_PAUSE_MS, reason } });
+async function setPause(reason, ms = CONTEXT_PAUSE_MS) {
+  await chrome.storage.local.set({ [STORAGE_KEYS.CONTEXT_PAUSE]: { until: Date.now() + ms, reason } });
 }
 
 /** Resume calling context.dev now (key changed or a connection test succeeded). */
@@ -155,7 +158,31 @@ export async function clearContextPause() {
  * @param {string} apiKey Bearer token.
  * @returns {Promise<any>} Parsed response body.
  */
+export function rateLimitPauseMs(retryAfter) {
+  const seconds = Number(retryAfter);
+  const asked = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : CONTEXT_RATE_LIMIT_MIN_PAUSE_MS;
+  return Math.min(CONTEXT_RATE_LIMIT_MAX_PAUSE_MS, Math.max(CONTEXT_RATE_LIMIT_MIN_PAUSE_MS, asked));
+}
+
+/** One scrape; a single 429 is retried once after a short wait before it counts as a rate limit. */
 async function requestExtract(url, apiKey) {
+  try {
+    return await requestExtractOnce(url, apiKey);
+  } catch (err) {
+    if (!err || !err.rateLimited) throw err;
+    await new Promise((resolve) => setTimeout(resolve, CONTEXT_RATE_LIMIT_RETRY_MS));
+    try {
+      return await requestExtractOnce(url, apiKey);
+    } catch (second) {
+      if (second && second.rateLimited) {
+        throw Object.assign(new Error('context.dev is busy (rate limited), retrying shortly'), { pause: true, pauseMs: second.pauseMs });
+      }
+      throw second;
+    }
+  }
+}
+
+async function requestExtractOnce(url, apiKey) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -176,8 +203,11 @@ async function requestExtract(url, apiKey) {
     if (res.status === 401 || res.status === 403) {
       throw Object.assign(new Error(`context.dev rejected the API key (HTTP ${res.status})`), { pause: true });
     }
-    if (res.status === 402 || res.status === 429) {
-      throw Object.assign(new Error(`context.dev quota or rate limit reached (HTTP ${res.status})`), { pause: true });
+    if (res.status === 429) {
+      throw Object.assign(new Error('context.dev rate limit (HTTP 429)'), { rateLimited: true, pauseMs: rateLimitPauseMs(res.headers.get('retry-after')) });
+    }
+    if (res.status === 402) {
+      throw Object.assign(new Error(`context.dev quota reached (HTTP ${res.status})`), { pause: true });
     }
     if (!res.ok) {
       throw new Error(`context.dev request failed (HTTP ${res.status})`);

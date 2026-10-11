@@ -47,6 +47,13 @@ export const CONTEXT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 export const CONTEXT_ERROR_TTL_MS = 15 * 60 * 1000;
 /** After a key or quota failure, context.dev is not called again for this long. */
 export const CONTEXT_PAUSE_MS = 30 * 60 * 1000;
+/**
+ * HTTP 429 means "too busy right now" (the shipped key is shared), not "bad key": retry once after a short wait,
+ * and if it persists pause for a minute or so (the server's Retry-After, within these bounds), not 30 minutes.
+ */
+export const CONTEXT_RATE_LIMIT_RETRY_MS = 2500;
+export const CONTEXT_RATE_LIMIT_MIN_PAUSE_MS = 45 * 1000;
+export const CONTEXT_RATE_LIMIT_MAX_PAUSE_MS = 5 * 60 * 1000;
 /** Macro odds from Gemini markets move slowly; refresh at most every 3 hours. */
 export const MACRO_CACHE_TTL_MS = 3 * 60 * 60 * 1000;
 /** After a failed Gemini markets request, do not try again for this long (falls back instantly). */

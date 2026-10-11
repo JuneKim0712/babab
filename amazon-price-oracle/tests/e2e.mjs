@@ -405,6 +405,27 @@ try {
     assert.equal(stats.extract, before + 2);
   });
 
+  await step('a rate-limited context.dev key (429) goes offline for under 5 minutes and recovers on its own', async () => {
+    await opts.bringToFront();
+    await opts.evaluate(() => chrome.storage.local.remove(['context_cache', 'context_pause']));
+    stats.contextStatus = 429;
+    await page.bringToFront();
+    await page.goto(PRODUCT, { waitUntil: 'load' });
+    await waitReady(page);
+    assert.match(await shadow(page, (root) => root.querySelector('.po-chip')?.textContent.trim()), /context\.dev: Offline/);
+    await opts.bringToFront();
+    const { context_pause: pause } = await opts.evaluate(() => chrome.storage.local.get('context_pause'));
+    const wait = pause.until - Date.now();
+    assert.ok(wait > 0 && wait <= 5 * 60 * 1000, `a 429 pause must be short, was ${Math.round(wait / 1000)} s`);
+
+    stats.contextStatus = 0;
+    await opts.evaluate(() => chrome.storage.local.remove('context_pause'));
+    await page.bringToFront();
+    await page.goto(PRODUCT, { waitUntil: 'load' });
+    await waitReady(page);
+    assert.match(await shadow(page, (root) => root.querySelector('.po-chip')?.textContent.trim()), /context\.dev: Connected/);
+  });
+
   // ---- Local price alerts (no account): card, notification, badge, popup, search bell, website page ------
   const EXPECTED_EXT_ID = 'gnckobeflimeehgaaliiibfliebjapbe';
   const SITE = 'https://xylm-306e6.web.app';

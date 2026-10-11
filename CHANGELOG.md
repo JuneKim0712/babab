@@ -5,6 +5,14 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.8.1 - context.dev no longer says "Offline" for half an hour after one rate limit
+
+The shipped context.dev key is shared with the PriceOracle website, and its log showed about one in five
+requests answered with HTTP 429 in bursts. 1.8.0 treated any 429 like a spent quota and paused context.dev for
+30 minutes, so the chip read "Offline" long after the key was fine again. Now a 429 is retried once after 2.5 s;
+if it persists the pause is 45 s to 5 min (the server's `Retry-After`, clamped). A 402 or a rejected key (401/403)
+still pauses for 30 minutes and Test Connection still clears it. The projection, thresholds and inputs are unchanged.
+
 ## 1.8.0 - Local price alerts, notifications and the website alerts page (no sign-in)
 
 Replaces the Firebase/Google sign-in alerts of 1.7.0. Note that the 1.7.0 sign-in was never exercised live

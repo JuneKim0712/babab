@@ -5,7 +5,7 @@ import {
   estimateVolatility,
   buildRecommendation
 } from '../src/background/projection-engine.js';
-import { clearContextPause, extractSignals, fetchProductContext, saveCacheEntry, signalsFromMarkdown, unwrapScrapeResponse } from '../src/background/context-dev.js';
+import { clearContextPause, rateLimitPauseMs, extractSignals, fetchProductContext, saveCacheEntry, signalsFromMarkdown, unwrapScrapeResponse } from '../src/background/context-dev.js';
 import {
   blendMacro,
   computeMacroSignal,
@@ -341,4 +341,28 @@ test('the backoff ends and a successful refresh clears it', async () => {
   const macro = await getMacroSignal(new Date('2026-01-15'));
   assert.ok(macro.sentimentMultiplier);
   assert.equal(store.gemini_macro_backoff, undefined);
+});
+
+test('a rate-limited (429) key pauses for seconds, not the 30 minute quota pause', async () => {
+  assert.equal(rateLimitPauseMs(null), 45 * 1000);
+  assert.equal(rateLimitPauseMs('10'), 45 * 1000);
+  assert.equal(rateLimitPauseMs('90'), 90 * 1000);
+  assert.equal(rateLimitPauseMs('99999'), 5 * 60 * 1000);
+  assert.equal(rateLimitPauseMs('soon'), 45 * 1000);
+
+  const store = stubChrome();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return { ok: false, status: 429, headers: { get: () => null }, json: async () => ({}) };
+  };
+  const res = await fetchProductContext('B0RATE0001');
+  assert.equal(calls, 2); // one retry before giving up
+  assert.notEqual(res.status, 'connected');
+  const wait = store.context_pause.until - Date.now();
+  assert.ok(wait > 0 && wait <= 60 * 1000, `pause should be short, was ${wait} ms`);
+
+  await clearContextPause();
+  globalThis.fetch = async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ json: { success: true, data: { listPrice: 20 } }, markdown: { success: true, data: '' } }) });
+  assert.equal((await fetchProductContext('B0RATE0001')).status, 'connected');
 });
