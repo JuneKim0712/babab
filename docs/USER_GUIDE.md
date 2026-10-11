@@ -66,10 +66,16 @@ The image below uses a made-up product page, so you can see the layout:
 | **30-Day Delta** | The expected change in dollars and percent. |
 | **context.dev chip** (top right) | Green means product data was fetched. Amber means it couldn't be, and the card is using only what is on the page. |
 | **Your price history** | Appears after you have seen a product twice. It shows how many times PriceOracle has seen the product and the lowest and highest price it saw. After a few days of visits this also makes the projection more accurate. |
-| **Price alert** | Sign in with Google, type a target price and click **Set alert**. You get an email when the price reaches it. **Turn off** pauses it, **Re-arm** re-enables one that already fired, **Remove** deletes it. Saving the first alert for a product can take up to a minute. |
+| **Price alert** | Type a target price and click **Set alert**. When PriceOracle sees the price at or below it, you get a desktop notification, the toolbar icon shows a badge, and the card says "Target reached". **Turn off** pauses it, **Re-arm** re-enables one that already fired, **Remove** deletes it. Alerts are saved in this browser, no sign-in needed. |
 | **Gemini Status** | Green means live Fed-decision and recession odds from Gemini prediction markets were blended in. Amber means they were unreachable and the card used its built-in model alone. |
 
 ![Price alert section of the card](images/07-price-alert.png)
+
+**On the PriceOracle website:** open <https://xylm-306e6.web.app/alerts/> and your extension alerts appear in a section called "Set in your PriceOracle extension", under the alerts the site already lists. You can pause, re-arm, change the target or delete them there.
+
+![Extension alerts on the PriceOracle alerts page](images/10-website-alerts.png)
+
+**How you are told:** PriceOracle checks the price whenever you browse the product or a search result, and once an hour in the background (Chrome must be running; it uses about one context.dev credit per alert, at most 5 per hour, never more than every 4 hours per alert). It does not send email: the notification has an **Email me this** button that opens a message to your own address in your mail app.
 
 ### Search results
 
@@ -94,7 +100,7 @@ You don't need to change anything. To open settings, right-click the PriceOracle
 
 - **Where PriceOracle appears:** two switches, **Product pages** and **Search results**. They take effect immediately, even on Amazon tabs that are already open. Turn one off if you only want the other.
 - **context.dev API key:** a working key is already filled in. Replace it with your own if you have one. **Reset to default** puts the built-in key back.
-- **Google account and price alerts:** **Sign in with Google** to use the Price alert section of the card. **Sign out** removes the sign-in from this browser (your alerts stay saved on the PriceOracle website).
+- **Price alerts:** type your **email address** (shown with your alerts and used by the notification's **Email me this** button; PriceOracle does not send email itself), switch **Check prices in the background** on or off, or **Send a test notification**.
 - **Local data:** **Clear price history** erases the prices PriceOracle remembered; **Clear context.dev cache** forces fresh product data.
 - **Test Connection:** checks that both services are reachable and that your key is accepted, without using any credits.
 - Click **Save** to keep changes.
@@ -115,10 +121,10 @@ Open `chrome://extensions`, find PriceOracle, click **Remove**, and confirm. You
 
 ## 7. Privacy
 
-- Everything runs in your browser, including the prices PriceOracle remembers for products you view (up to 300 products, 120 days). **Settings > Clear price history** erases them. There is no analytics and no tracking. The one exception is the optional price alerts: only if you sign in with Google and click **Set alert**, the product link, your target price and your Google email address are sent to the PriceOracle website (Firebase) so it can watch the price and email you.
+- Everything runs in your browser, including the prices PriceOracle remembers for products you view (up to 300 products, 120 days). **Settings > Clear price history** erases them. There is no analytics and no tracking. Price alerts and the email address you enter are saved only in this browser. The background check looks up the product price through context.dev, like the card does.
 - When you view a product or click **Deep analysis** on a search chip, the extension sends that product's Amazon link to **context.dev** to read its pricing details, and asks **Gemini's public prediction-market API** for macro odds. Neither request contains anything about you.
 - Your context.dev key (the built-in one, or yours if you replace it) stays in your browser's local extension storage.
-- Chrome will say the extension can "read and change data on amazon.com". That is required to draw the card on the page. It does not read other sites.
+- Chrome will say the extension can "read and change data on amazon.com". That is required to draw the card on the page. The only other site it runs on is the PriceOracle alerts website, to show your alerts there. It does not read other sites.
 
 ## 8. Troubleshooting
 

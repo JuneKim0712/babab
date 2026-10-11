@@ -59,7 +59,7 @@ Notes:
 
 **What it is:** a client-side extension. All logic runs in the browser; the only network calls are from the background service worker to context.dev and Gemini.
 
-**Optional price alerts:** after signing in with Google (Firebase project `xylm-306e6`) the user can set, pause, re-arm or remove a price alert for the current item from the card; alerts live on the PriceOracle website, which also sends the emails. See `docs/ALERTS_INTEGRATION.md` (includes the one-time Google redirect-URI setup).
+**Optional price alerts:** the user can set, pause, re-arm or remove a price alert for the current item from the card. Alerts are stored locally (`chrome.storage.local`), are checked whenever the extension sees the price (product pages, search results) and by an hourly background check, and fire a desktop notification plus a toolbar badge. An email address saved in Settings is listed with the alerts and used by the notification's "Email me this" button (a `mailto:`; the extension sends no email). The same alerts are added to <https://xylm-306e6.web.app/alerts/> next to the site's own. No sign-in. See `docs/ALERTS_INTEGRATION.md`.
 
 **What it is not:**
 - Not a price-history tracker. Amazon pages expose no price history, so the projection comes from a model (see below), not from past prices.
@@ -111,7 +111,7 @@ Request flow for a search-results page (`search-results.js`):
 5. A debounced `MutationObserver` on the results grid adds chips to lazily loaded cards and re-renders a card when its price changes.
 
 Key properties:
-- **Content scripts are classic scripts**, not modules (Chrome does not allow ES modules in `content_scripts`). They share state through `globalThis.PriceOracle`. Order in `manifest.json` matters: messaging, parser, template, search-results, content (`tests/package.test.mjs` enforces it).
+- **Content scripts are classic scripts**, not modules (Chrome does not allow ES modules in `content_scripts`). They share state through `globalThis.PriceOracle`. Order in `manifest.json` matters: messaging, parser, template, search-results, content (`tests/package.test.mjs` enforces it). The second entry (the PriceOracle website) loads `messaging.js` then `site-alerts.js`.
 - **The service worker is an ES module** (`"type": "module"`) so background files `import` each other and `src/shared/constants.js`.
 - **No CORS issues:** pages never call external APIs; only the worker does, using `host_permissions`.
 - **No inline scripts** anywhere (MV3 CSP). Popup, options and welcome load `type="module"` files.
@@ -124,7 +124,7 @@ Key properties:
 .
 ├── README.md                     This file (single source of truth for collaborators)
 ├── AGENTS.md                     Short rules for AI/code agents; points here
-├── docs/ALERTS_INTEGRATION.md    How price alerts use the website API: Google/Firebase sign-in, endpoints, one-time setup
+├── docs/ALERTS_INTEGRATION.md    How local price alerts work: storage, price sources, notifications, the website alerts page, limits
 ├── docs/DESIGN.md                Design system: palette, components, sources
 ├── docs/USER_GUIDE.md            End-user guide for installing and using the extension (+ docs/images)
 ├── PriceOracle.zip               Ready-to-install build of the extension (regenerate with npm run pack)
@@ -143,15 +143,15 @@ Key properties:
 
 | File | Role |
 | --- | --- |
-| `manifest.json` | MV3 manifest. Permissions: `storage`, `scripting`, `identity` (Google sign-in for price alerts). Host permissions: `api.context.dev`, `api.gemini.com`, `www.amazon.com`, `amazon.com`, `xylm-306e6.web.app`, `identitytoolkit.googleapis.com`, `securetoken.googleapis.com`. Declares the service worker (module), the five content scripts (in order), popup, options page (`open_in_tab`), icons. **`version` here is the release version.** |
+| `manifest.json` | MV3 manifest. Permissions: `storage`, `scripting`, `alarms` (hourly alert check), `notifications` (alerts). Host permissions: `api.context.dev`, `api.gemini.com`, `www.amazon.com`, `amazon.com`. Declares the service worker (module), the five Amazon content scripts (in order), a second content script entry for `https://xylm-306e6.web.app/*` (`messaging.js`, `site-alerts.js`), popup, options page (`open_in_tab`), icons. **`version` here is the release version.** |
 | `src/shared/tokens.css` | Design tokens (the "Ledger" palette) for popup, options and welcome; mirrored in `TOKENS` inside `widget-template.js`. See `docs/DESIGN.md`. |
 | `src/shared/constants.js` | Single source of truth for endpoints, the default context.dev key, storage keys, cache TTLs and message type names. Imported by the worker, popup and options. Content scripts cannot import it, so `content.js` mirrors the one message name it needs. |
 | `src/background/service-worker.js` | Message router (`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`), the analysis pipeline, in-flight request de-duplication, `last_analysis` bookkeeping, and the `onInstalled` handler (opens the welcome tab and injects content scripts into already-open Amazon tabs). Always replies `{ok, data}` or `{ok:false, error}`. |
 | `src/background/context-dev.js` | context.dev client. Calls `POST /v1/web/scrape` with `formats {json, markdown}` and a pricing JSON schema. `unwrapScrapeResponse` flattens the API's `{requested, success, data}` wrappers; `extractSignals` + `signalsFromMarkdown` turn the output into normalised signals (list price, current price, low/avg/high, discount %, rating, reviews, bought-past-month, category, availability). 24 h cache per ASIN (15 min negative cache for errors). `testContextDevConnection` uses a free endpoint. |
 | `src/background/gemini-prediction.js` | Two parts. (1) **Gemini prediction markets** client: fetches Economics events, `contractProbability`, `computeMacroSignal` (Fed hike/cut odds + recession odds to a sentiment multiplier and discount boost), `blendMacro`, 3 h cache with stale fallback. (2) **Heuristic model** `simulatePrediction`: deterministic, seeded by ASIN and ISO week; mean reversion vs typical/list price, seasonal sale calendar (`findSeasonalEvent`), category sale proneness. Always available as the fallback. |
-| `src/background/account.js` | Google account (needs `chrome.*`): `signIn` (Google OAuth through `launchWebAuthFlow`, then Firebase `signInWithIdp`), `signOut`, `getAccountStatus`, `getIdToken` (refreshes ahead of expiry, de-duplicated). |
-| `src/background/alerts-client.js` | Calls to the website API from the worker: `getAlertState`, `createAlert` (explicit click only, duplicate-safe), `updateAlert`, `removeAlert`, `countActiveAlerts`. Retries a 401 once with a fresh token. |
-| `src/background/alerts-api.js` | Pure helpers: OAuth URL and redirect parsing (state/nonce/audience), session mapping, request bodies, `normalizeAlert`, `findAlertForAsin`, `validateTarget`. |
+| `src/background/alerts.js` | Local price alerts (needs `chrome.*`): serialized storage in `price_alerts`, `createAlert` / `updateAlert` / `removeAlert`, `noticePrice` (called with every price seen on product pages and search results), notifications (with "Open on Amazon" and "Email me this" buttons), toolbar badge, the hourly background check (alarm `po-alert-check`, alerts not checked in 4 h, max 5 per run, one context.dev credit each, switchable), and the alert email. |
+| `src/content/site-alerts.js` | Runs only on `xylm-306e6.web.app`. On the `/alerts` route adds a "Set in your PriceOracle extension" section under the site's own list (Pause/Resume/Re-arm, Edit, Delete) without touching the page's React data; watches SPA route changes. |
+| `src/background/alerts-api.js` | Pure alert helpers: `normalizeAlert`, `sanitizeAlerts`, `upsertAlert`, `patchAlert`, `observePrice` (fires once at target), `dueForCheck`, `sortAlerts`, `summarizeAlerts`, `badgeFor`, `notificationText`, `isEmail`, `mailtoUrl`, `validateTarget`. |
 | `src/background/recent.js` | Pure `addRecent` for the popup's recent list. |
 | `src/background/price-history.js` | Local observation log. Pure helpers (`addObservation`, `summarize`, `historySignals`) plus chained storage writes (`recordPrice`). `historySignals` returns low/high/avg only after 3+ points over 2+ days; the worker merges them *under* context.dev signals. |
 | `src/background/projection-engine.js` | Pure functions, no `chrome.*`. `estimateVolatility`, `computeProjection`, `buildRecommendation`, `computeConfidence`, `formatUsd`. Contains the spec formulas (see below). |
@@ -160,8 +160,8 @@ Key properties:
 | `src/content/content.js` | Entry point. Finds the anchor (after `#corePriceDisplay_desktop_feature_div`, else top of `#buybox`, else other price containers), creates one Shadow DOM host (`#price-oracle-host`), sends analysis requests, ignores stale responses (request sequence counter), observes the product container with a debounced `MutationObserver`, re-attaches the host if Amazon re-renders the DOM. |
 | `src/content/messaging.js` | `PriceOracle.send(message)`: `chrome.runtime.sendMessage` with one retry when the worker was asleep and a 90 s timeout. `PriceOracle.settings.get/watch` read the options switches and report changes live. Both content scripts use them. |
 | `src/content/search-results.js` | Search-page entry point (runs only on `/s` URLs): chip placement, lazy analysis queue (concurrency 4), chip click handling (expand, retry, deep analysis), observers for lazily loaded cards. |
-| `src/popup/popup.html/.css/.js` | Toolbar popup: last analysed product, counters, connection status badges, clear-cache button. |
-| `src/options/options.html/.css/.js` | Settings page: "Where PriceOracle appears" switches (saved immediately), context.dev key (pre-filled with the default; saving the default removes the stored override), **Test Connection** (tests unsaved form values via the worker), status banner. |
+| `src/popup/popup.html/.css/.js` | Toolbar popup: last analysed product, counters, connection status badges, the local price alert list (Re-arm, status badge), clear-cache button. |
+| `src/options/options.html/.css/.js` | Settings page: "Where PriceOracle appears" switches (saved immediately), context.dev key (pre-filled with the default; saving the default removes the stored override), **Test Connection** (tests unsaved form values via the worker), status banner, price alert email (validated on Save), background-check switch, "Send a test notification". |
 | `src/welcome/welcome.html/.css` | Post-install tab: no setup needed, link to a sample product, pin tip. |
 
 ### Tooling and tests (`amazon-price-oracle/`)
@@ -176,9 +176,9 @@ Key properties:
 | `tests/history.test.mjs` | Unit tests for the local price history. |
 | `tests/parser.test.mjs` | DOM tests (jsdom) for `amazon-parser.js` using the mock pages as fixtures. |
 | `tests/widget.test.mjs` | Pure rendering tests for `widget-template.js`: escaping, tiers, chip states. |
-| `tests/alerts-api.test.mjs` | Unit tests for the sign-in and alert helpers (redirect checks, sessions, bodies, alert matching). |
+| `tests/alerts-api.test.mjs` | Unit tests for the alert helpers (storage cleanup, firing rules, re-arm, due checks, sorting, badge, email, mailto, notification text). |
 | `tests/design.test.mjs` | Design guards: token sync, WCAG AA contrast, no emoji/gradients/soft shadows/indigo. |
-| `tests/package.test.mjs` | Guard tests: version sync, manifest file references, content-script order and classic-script rule, no inline scripts, committed zip is current. |
+| `tests/package.test.mjs` | Guard tests: version sync, manifest file references, content-script order (both entries) and classic-script rule, no inline scripts, committed zip is current. |
 | `tests/engine.test.mjs` | Unit tests (Node `node:test`): projection formulas, tier ordering, thresholds, signal extraction, scrape-response unwrapping, macro signal, heuristic determinism and bounds, seasonal calendar. |
 | `tests/e2e.mjs` | End-to-end test in a real Chrome: loads the unpacked extension, drives a mock Amazon page with mock context.dev and mock Gemini. Run against the shipped zip with `EXT_DIR`. |
 | `test-page/amazon-product.html` | Mock Amazon product page with hostile CSS (proves Shadow DOM isolation) and variant buttons (proves re-render). |
@@ -250,14 +250,16 @@ deltaPercentMonth <= -4.0  ->  WAIT        >= +4.0  ->  BUY NOW        otherwise
 | `context_cache` | `{ [ASIN]: { fetchedAt, signals, error? } }`, 24 h TTL, max 200 entries. |
 | `gemini_macro_backoff` | `{until, reason}`: set for 5 minutes after a failed Gemini markets request so later analyses fall back instantly. Cleared by a successful fetch, Save, Clear cache or Test Connection. |
 | `gemini_macro_cache` | Last macro signal, 3 h TTL, reused up to 24 h if Gemini is unreachable (`stale: true`). |
-| `account_session`, `account_marker` | Firebase session `{idToken, refreshToken, expiresAt, email, name, uid}` (a revoked one becomes `{email, expired: true}`), and a token-free `{signedIn, at}` note that product pages watch. Tokens go only to Google/Firebase and the site API. |
+| `price_alerts` | Local price alerts: array, newest first, one per ASIN, max 200: `{id, asin, title, targetPrice, status: active\|paused\|triggered, priceAtCreation, lastPrice, lastCheckedAt, createdAt, triggeredAt, triggeredPrice}`. |
+| `alert_email` | Address typed in Settings (optional). Listed with the alerts and used for the "Email me this" `mailto:`. |
+| `alert_background_checks` | `false` when the hourly background check is switched off (default on). |
 | `show_product_card`, `show_search_chips` | Options switches. Absent means on; `false` turns that surface off. Content scripts watch `chrome.storage.onChanged` and add or remove the UI live. |
 | `context_pause` | `{until, reason}`: circuit breaker set after a 401/402/403/429 from context.dev; no calls until `until` (30 min) or until settings are saved / Test Connection succeeds. |
 | `price_history` | `{ [ASIN]: [[timestamp, price], ...] }`: prices this browser has seen (max 40 points per ASIN, 300 ASINs, 120 days). Written by `price-history.js`. |
 | `last_analysis`, `recent_analyses`, `analysis_count` | Popup display data (`recent_analyses` holds the last 5 products, see `recent.js`). |
 
 Messages (content/popup/options to worker), names in `MSG`:
-`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`, `PO_CLEAR_HISTORY`, and for price alerts `PO_ACCOUNT_STATUS`, `PO_ACCOUNT_SIGN_IN`, `PO_ACCOUNT_SIGN_OUT`, `PO_ALERT_STATE`, `PO_ALERT_CREATE`, `PO_ALERT_UPDATE`, `PO_ALERT_REMOVE`. Every response is `{ok:true,data}` or `{ok:false,error}`.
+`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`, `PO_CLEAR_HISTORY`, and for price alerts `PO_ALERT_STATE`, `PO_ALERT_CREATE`, `PO_ALERT_UPDATE`, `PO_ALERT_REMOVE`, `PO_ALERT_LIST`, `PO_ALERT_TEST_NOTIFICATION`. Every response is `{ok:true,data}` or `{ok:false,error}`.
 
 Request payload extras: `forceRefresh` (product page retry) and `light` (search results, no context.dev calls). Result contract returned by `PO_ANALYZE_PRODUCT`: `{ asin, title, light, projection: {currentPrice, volatility, projectedMid, deltaPercentMonth, deltaAmount, tiers:{lowest,low,mid,high,highest}, recommendation:{action,label,message}, confidence}, meta: {history:{count,low,high,avg,spanDays}|null, context:{status,fromCache,fetchedAt,signalCount,error}, gemini:{status,isSimulated,source,rationale,summary,stale,sentimentMultiplier,discountProbability,error}} }`. The widget, popup and tests all depend on this shape; change it in one commit across all of them.
 
@@ -363,8 +365,8 @@ Current release: `v1.0.0`.
 - The default context.dev key is shipped in `src/shared/constants.js` as requested, so anyone with the extension can read it. For public distribution replace it, or have users set their own in Options, or rotate it.
 - User-entered keys live only in `chrome.storage.local` and are only sent to their own API from the service worker. Keys are never logged.
 - Data sent out: the ASIN/product URL to context.dev; nothing user-identifying to Gemini (it is a GET for public market data). No analytics, no telemetry.
-- Price alerts (optional, only after Google sign-in): the Firebase ID and refresh tokens are kept in `chrome.storage.local`, are sent only to Google/Firebase and `xylm-306e6.web.app`, and are deleted on sign-out or when Firebase revokes them. Only an explicit click sends the product link, target price and Google email to the site. Content scripts never touch the tokens or the network for alerts.
-- Permissions are minimal: `storage`, `scripting` (to inject into already-open Amazon tabs on install), `identity` (Google sign-in), and hosts for Amazon, context.dev, Gemini, the PriceOracle site and Google's token endpoints.
+- Price alerts (optional): stored only in this browser (`chrome.storage.local`). Nothing about an alert is sent anywhere. The background check makes the same context.dev lookups as the card (product ID only). The email in Settings stays local and is used only to fill a `mailto:` the user opens. The website content script runs only on `xylm-306e6.web.app`, renders with `textContent` and talks only to the extension.
+- Permissions are minimal: `storage`, `scripting` (to inject into already-open Amazon tabs on install), `alarms` and `notifications` (price alerts), and hosts for Amazon, context.dev and Gemini. The PriceOracle site is matched by a content script only (no host permission, no network access to it). There is no `identity` permission.
 - Shadow DOM and `escapeHtml` prevent page CSS leakage and HTML injection from product titles or API strings.
 
 ---

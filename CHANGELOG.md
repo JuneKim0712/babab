@@ -5,6 +5,36 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.8.0 - Local price alerts, notifications and the website alerts page (no sign-in)
+
+Replaces the Firebase/Google sign-in alerts of 1.7.0. Note that the 1.7.0 sign-in was never exercised live
+(it needed a Google redirect URI that was never registered), so nothing a user relied on is lost. The
+projection, thresholds, inputs and fallbacks are unchanged. Details in
+[docs/ALERTS_INTEGRATION.md](docs/ALERTS_INTEGRATION.md).
+
+- Alerts are saved in this browser (`chrome.storage.local` key `price_alerts`, one per product). No account,
+  no Firebase, no Google, no network for alerts.
+- Settings: **email address** (validated, saved with Save), **Check prices in the background** switch, and
+  **Send a test notification**. The email is listed with the alerts and used by the notification's
+  **Email me this** button (a `mailto:`; the extension sends no email).
+- When a price reaches the target the extension alerts the user: desktop notification (Open on Amazon, Email me
+  this), toolbar badge with the number of alerts waiting, "Target reached" on the card, popup and website page.
+  Fires once; **Re-arm** or a new target re-arms it.
+- Prices are seen on product pages, in search results (no extra requests) and by an hourly background check of
+  alerts not checked in 4 hours (max 5 per run, one context.dev credit each, switchable).
+- Website: on <https://xylm-306e6.web.app/alerts/> a content script adds a "Set in your PriceOracle extension"
+  section under the site's own list (Pause/Resume/Re-arm, Edit, Delete). It never touches the site's React
+  state or `localStorage`, follows the single-page app's route changes, and the site's demo alerts are
+  unaffected.
+- Popup lists the local alerts with a status badge and Re-arm; search chips show a bell for items with an alert.
+- Removed the `identity` permission, the Google and Firebase host permissions and the site host permission, the
+  added `alarms` and `notifications` (the manifest `key` is kept). Deleted `account.js`, `alerts-client.js`
+  and the `account_session` / `account_marker` storage (not read any more).
+- Tests: alert helpers rewritten (unit), card and package guards updated, e2e covers set / fire / re-arm,
+  notifications, popup list, search bell, Settings and the website page against a mock page using the site's
+  stylesheet. 102 unit tests pass; e2e passes in real Chrome. The live site was checked against that mock, not
+  an authenticated session.
+
 ## 1.7.0 - Price alerts through the PriceOracle website API (Google + Firebase)
 
 Replaces the 1.6.0 draft, which targeted a hypothetical website API, with the real one documented for

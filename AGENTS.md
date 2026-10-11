@@ -5,6 +5,7 @@ Read [README.md](README.md) first: purpose, architecture, file map, projection m
 - The extension lives in `amazon-price-oracle/`. `PriceOracle.zip` at the repo root is the shipped build.
 - Content scripts (`src/content/*`) are classic scripts sharing `globalThis.PriceOracle`; background, popup, options and welcome code are ES modules.
 - All external `fetch` calls go through `src/background/service-worker.js` and its clients. Never call APIs from pages.
+- Price alerts are local (`price_alerts` in `chrome.storage.local`, see `docs/ALERTS_INTEGRATION.md`): no accounts, no servers. The only credit-spending background work is the capped hourly alert check (max 5 lookups per run, alerts not checked in 4 h).
 - Search pages use `light` analyses: they must never spend context.dev credits (cache only). Only the explicit "Deep analysis" click may.
 - Business logic stays pure (`projection-engine.js`, parsing, `computeMacroSignal`) and is unit tested.
 - Every external dependency needs a fallback; the page must never break.
