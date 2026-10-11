@@ -109,7 +109,7 @@ Request flow for a search-results page (`search-results.js`):
 5. A debounced `MutationObserver` on the results grid adds chips to lazily loaded cards and re-renders a card when its price changes.
 
 Key properties:
-- **Content scripts are classic scripts**, not modules (Chrome does not allow ES modules in `content_scripts`). They share state through `globalThis.PriceOracle`. Order in `manifest.json` matters: parser, template, search-results, content.
+- **Content scripts are classic scripts**, not modules (Chrome does not allow ES modules in `content_scripts`). They share state through `globalThis.PriceOracle`. Order in `manifest.json` matters: messaging, parser, template, search-results, content (`tests/package.test.mjs` enforces it).
 - **The service worker is an ES module** (`"type": "module"`) so background files `import` each other and `src/shared/constants.js`.
 - **No CORS issues:** pages never call external APIs; only the worker does, using `host_permissions`.
 - **No inline scripts** anywhere (MV3 CSP). Popup, options and welcome load `type="module"` files.
@@ -139,7 +139,7 @@ Key properties:
 
 | File | Role |
 | --- | --- |
-| `manifest.json` | MV3 manifest. Permissions: `storage`, `scripting`. Host permissions: `api.context.dev`, `api.gemini.com`, `www.amazon.com`, `amazon.com`. Declares the service worker (module), the four content scripts (in order), popup, options page (`open_in_tab`), icons. **`version` here is the release version.** |
+| `manifest.json` | MV3 manifest. Permissions: `storage`, `scripting`. Host permissions: `api.context.dev`, `api.gemini.com`, `www.amazon.com`, `amazon.com`. Declares the service worker (module), the five content scripts (in order), popup, options page (`open_in_tab`), icons. **`version` here is the release version.** |
 | `src/shared/constants.js` | Single source of truth for endpoints, the default context.dev key, storage keys, cache TTLs and message type names. Imported by the worker, popup and options. Content scripts cannot import it, so `content.js` mirrors the one message name it needs. |
 | `src/background/service-worker.js` | Message router (`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`), the analysis pipeline, in-flight request de-duplication, `last_analysis` bookkeeping, and the `onInstalled` handler (opens the welcome tab and injects content scripts into already-open Amazon tabs). Always replies `{ok, data}` or `{ok:false, error}`. |
 | `src/background/context-dev.js` | context.dev client. Calls `POST /v1/web/scrape` with `formats {json, markdown}` and a pricing JSON schema. `unwrapScrapeResponse` flattens the API's `{requested, success, data}` wrappers; `extractSignals` + `signalsFromMarkdown` turn the output into normalised signals (list price, current price, low/avg/high, discount %, rating, reviews, bought-past-month, category, availability). 24 h cache per ASIN (15 min negative cache for errors). `testContextDevConnection` uses a free endpoint. |
@@ -148,6 +148,7 @@ Key properties:
 | `src/content/amazon-parser.js` | `PriceOracle.Parser`: ASIN (`#ASIN`, URL regex fallback), price (multiple selector fallbacks, `.a-offscreen` and whole/fraction), list price, category (breadcrumb, dropdown, nav), title, rating; `parseProduct()` returns null on non-product pages or when no price is present. Search helpers: `isSearchPage`, `getSearchCategory`, `getSearchCards`, `parseSearchCard`. |
 | `src/content/widget-template.js` | `PriceOracle.Widget.render(state)`: returns the Shadow DOM HTML plus the isolated CSS for loading / error / ready states, the pill badges, the five-tier range bar and pin (`pinPosition` interpolates between tiers). `renderChip(state)` renders the compact search-result chip and its expandable panel. Re-asserts inheritable CSS properties on the card because the host element lives in Amazon's DOM. |
 | `src/content/content.js` | Entry point. Finds the anchor (after `#corePriceDisplay_desktop_feature_div`, else top of `#buybox`, else other price containers), creates one Shadow DOM host (`#price-oracle-host`), sends analysis requests, ignores stale responses (request sequence counter), observes the product container with a debounced `MutationObserver`, re-attaches the host if Amazon re-renders the DOM. |
+| `src/content/messaging.js` | `PriceOracle.send(message)`: `chrome.runtime.sendMessage` with one retry when the worker was asleep and a 90 s timeout. Both content scripts use it. |
 | `src/content/search-results.js` | Search-page entry point (runs only on `/s` URLs): chip placement, lazy analysis queue (concurrency 4), chip click handling (expand, retry, deep analysis), observers for lazily loaded cards. |
 | `src/popup/popup.html/.css/.js` | Toolbar popup: last analysed product, counters, connection status badges, clear-cache button. |
 | `src/options/options.html/.css/.js` | Settings page: context.dev key (pre-filled with the default; saving the default removes the stored override), **Test Connection** (tests unsaved form values via the worker), status banner. |
@@ -160,6 +161,7 @@ Key properties:
 | `package.json` | Scripts: `test` (unit), `e2e`, `pack`, `icons`, `demo`. Only dev dependency: `puppeteer-core`. |
 | `scripts/pack.mjs` | Builds `../PriceOracle.zip` (manifest, icons, src only) with a dependency-free, deterministic zip writer. |
 | `scripts/generate-icons.js` | Generates the PNG icons with a zero-dependency rasteriser. |
+| `tests/package.test.mjs` | Guard tests: version sync, manifest file references, content-script order and classic-script rule, no inline scripts, committed zip is current. |
 | `tests/engine.test.mjs` | Unit tests (Node `node:test`): projection formulas, tier ordering, thresholds, signal extraction, scrape-response unwrapping, macro signal, heuristic determinism and bounds, seasonal calendar. |
 | `tests/e2e.mjs` | End-to-end test in a real Chrome: loads the unpacked extension, drives a mock Amazon page with mock context.dev and mock Gemini. Run against the shipped zip with `EXT_DIR`. |
 | `test-page/amazon-product.html` | Mock Amazon product page with hostile CSS (proves Shadow DOM isolation) and variant buttons (proves re-render). |

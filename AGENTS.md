@@ -12,3 +12,4 @@ Read [README.md](README.md) first: purpose, architecture, file map, projection m
 - Before committing: `cd amazon-price-oracle && npm test` (and `npm run e2e` for UI or pipeline changes). If shipped files changed, run `npm run pack` and commit `PriceOracle.zip` with them.
 - Keep the worker/widget/popup/test result contract in sync (see README, "Storage, messages and settings").
 - Releasing: bump `manifest.json` and `package.json` versions, rebuild the zip, commit, `git tag -a vX.Y.Z`, `git push origin main --tags`.
+- Add a line to CHANGELOG.md for every revision (what improved, and that core behaviour is unchanged).

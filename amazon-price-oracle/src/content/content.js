@@ -12,7 +12,7 @@
   'use strict';
 
   const PO = root.PriceOracle;
-  if (!PO || !PO.Parser || !PO.Widget) return;
+  if (!PO || !PO.Parser || !PO.Widget || !PO.send) return;
   if (root.__priceOracleLoaded) return;
   root.__priceOracleLoaded = true;
 
@@ -89,21 +89,7 @@
   // Analysis
   // -------------------------------------------------------------------------
 
-  function sendMessage(message) {
-    return new Promise((resolve, reject) => {
-      try {
-        chrome.runtime.sendMessage(message, (response) => {
-          const err = chrome.runtime.lastError;
-          if (err) return reject(new Error(err.message));
-          if (!response) return reject(new Error('No response from the PriceOracle service worker'));
-          if (!response.ok) return reject(new Error(response.error || 'Unknown error'));
-          resolve(response.data);
-        });
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
+  const sendMessage = (message) => PO.send(message);
 
   async function analyze(product, forceRefresh = false) {
     const seq = ++requestSeq;

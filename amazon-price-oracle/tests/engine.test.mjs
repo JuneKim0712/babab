@@ -5,7 +5,7 @@ import {
   estimateVolatility,
   buildRecommendation
 } from '../src/background/projection-engine.js';
-import { extractSignals, fetchProductContext, signalsFromMarkdown, unwrapScrapeResponse } from '../src/background/context-dev.js';
+import { extractSignals, fetchProductContext, saveCacheEntry, signalsFromMarkdown, unwrapScrapeResponse } from '../src/background/context-dev.js';
 import {
   blendMacro,
   computeMacroSignal,
@@ -245,4 +245,12 @@ test('concurrent macro lookups share a single Gemini markets request', async () 
   assert.ok(results.every((r) => r.sentimentMultiplier === results[0].sentimentMultiplier));
   await getMacroSignal(new Date('2026-01-15')); // now served from the 3h cache
   assert.equal(calls, 1);
+});
+
+test('simultaneous cache writes keep every entry', async () => {
+  const store = stubChrome();
+  await Promise.all(
+    Array.from({ length: 25 }, (_, i) => saveCacheEntry(`B0TEST${String(i).padStart(4, '0')}`, { fetchedAt: Date.now(), signals: { listPrice: i + 1 } }))
+  );
+  assert.equal(Object.keys(store.context_cache).length, 25);
 });

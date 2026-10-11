@@ -38,6 +38,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 chrome.runtime.onInstalled.addListener((details) => {
   // The optional Gemini API key was removed; delete any key saved by older versions.
   chrome.storage.local.remove('gemini_api_key');
+  if (details.reason === 'update') {
+    // Tabs opened before an update still run the previous (now orphaned) scripts.
+    injectIntoOpenAmazonTabs();
+    return;
+  }
   if (details.reason !== 'install') return;
   chrome.storage.local.set({ [STORAGE_KEYS.ANALYSIS_COUNT]: 0 });
   chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome/welcome.html') });

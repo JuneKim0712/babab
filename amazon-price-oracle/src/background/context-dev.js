@@ -106,8 +106,7 @@ export async function fetchProductContext(asin, { forceRefresh = false, cacheOnl
     const payload = await requestExtract(`https://www.amazon.com/dp/${asin}`, key);
     const signals = extractSignals(payload);
     const fetchedAt = Date.now();
-    cache[asin] = { fetchedAt, signals };
-    await writeCache(cache);
+    await saveCacheEntry(asin, { fetchedAt, signals });
     return { status: 'connected', fromCache: false, fetchedAt, signals };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -116,8 +115,7 @@ export async function fetchProductContext(asin, { forceRefresh = false, cacheOnl
     if (entry && !entry.error) {
       return { status: 'cached', fromCache: true, fetchedAt: entry.fetchedAt, signals: entry.signals, error: message };
     }
-    cache[asin] = { fetchedAt, signals: {}, error: message };
-    await writeCache(cache);
+    await saveCacheEntry(asin, { fetchedAt, signals: {}, error: message });
     return { status: 'error', fromCache: false, fetchedAt, signals: {}, error: message };
   }
 }
@@ -380,6 +378,21 @@ function mergeMissing(target, source) {
 async function readCache() {
   const data = await chrome.storage.local.get(STORAGE_KEYS.CONTEXT_CACHE);
   return data[STORAGE_KEYS.CONTEXT_CACHE] || {};
+}
+
+/**
+ * Store one entry. Writes are chained and re-read the cache first, so analyses
+ * that finish at the same time (search pages) cannot overwrite each other.
+ */
+let cacheWrites = Promise.resolve();
+export function saveCacheEntry(asin, entry) {
+  const next = cacheWrites.then(async () => {
+    const cache = await readCache();
+    cache[asin] = entry;
+    await writeCache(cache);
+  });
+  cacheWrites = next.catch(() => {});
+  return next;
 }
 
 async function writeCache(cache) {

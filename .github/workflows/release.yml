@@ -1,9 +1,15 @@
 name: Release
 
 # Push a tag like v1.0.0 to publish a GitHub Release with PriceOracle.zip attached.
+# If the tag push did not trigger this workflow, run it by hand: Actions > Release > Run workflow, tag = v1.0.0.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release (for example v1.1.1)
+        required: true
 
 permissions:
   contents: write
@@ -13,14 +19,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Tag matches manifest version
         working-directory: amazon-price-oracle
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           v=$(node -p "require('./manifest.json').version")
-          if [ "v$v" != "${GITHUB_REF_NAME}" ]; then echo "Tag ${GITHUB_REF_NAME} != manifest version v$v"; exit 1; fi
+          if [ "v$v" != "${TAG}" ]; then echo "Tag ${TAG} != manifest version v$v"; exit 1; fi
       - name: Unit tests
         working-directory: amazon-price-oracle
         run: npm test
@@ -30,7 +40,8 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" PriceOracle.zip \
-            --title "PriceOracle $GITHUB_REF_NAME" \
+          gh release create "$TAG" PriceOracle.zip \
+            --title "PriceOracle $TAG" \
             --notes "Download PriceOracle.zip, unzip, then chrome://extensions > Developer mode > Load unpacked. See the README for details."
