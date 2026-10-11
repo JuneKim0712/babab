@@ -33,6 +33,7 @@ export const STORAGE_KEYS = Object.freeze({
   PRICE_HISTORY: 'price_history',
   CONTEXT_PAUSE: 'context_pause',
   LAST_ANALYSIS: 'last_analysis',
+  RECENT_ANALYSES: 'recent_analyses',
   ANALYSIS_COUNT: 'analysis_count'
 });
 

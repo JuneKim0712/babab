@@ -54,3 +54,10 @@ code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-size: 11.
 .btn.primary:hover { background: #3730a3; }
 .btn:focus-visible, .icon-btn:focus-visible, input:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
 
+
+.recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.recent a { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; padding: 6px 4px; border-radius: 8px; color: inherit; text-decoration: none; }
+.recent a:hover, .recent a:focus-visible { background: #f1f5f9; }
+.recent a:focus-visible { outline: 2px solid #6366f1; }
+.recent-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill.small { font-size: 10.5px; padding: 2px 7px; border-radius: 6px; }

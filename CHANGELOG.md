@@ -5,6 +5,13 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.4.0 - Recently analysed products
+
+- The popup lists the last products you looked at (below the most recent one): title, verdict pill and price,
+  each linking back to the product. Full analyses only: product pages and "Deep analysis" on a search chip (quick chip estimates do not fill the list).
+- Rows are built with `textContent` and `encodeURIComponent`, so titles and ASINs can never inject markup.
+- New pure module `recent.js` with unit tests (ordering, one row per ASIN, cap of 5), plus an end-to-end check.
+
 ## 1.3.2 - Circuit breaker for context.dev
 
 - A rejected key (401/403) or exhausted quota (402/429) now pauses context.dev calls for 30 minutes for

@@ -26,6 +26,32 @@ function timeAgo(ts) {
   return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 }
 
+/** Rows link to the product; text is set with textContent so titles can never inject markup. */
+function renderRecent(list) {
+  $('recent-card').hidden = !list || list.length < 2; // the last product is already shown above
+  const ul = $('recent-list');
+  ul.replaceChildren();
+  for (const item of (list || []).slice(1)) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = `https://www.amazon.com/dp/${encodeURIComponent(item.asin)}`;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    const title = document.createElement('span');
+    title.className = 'recent-title';
+    title.textContent = item.title || `ASIN ${item.asin}`;
+    const pill = document.createElement('span');
+    pill.className = `pill small ${item.action}`;
+    pill.textContent = item.label;
+    const price = document.createElement('span');
+    price.className = 'muted';
+    price.textContent = usd(item.currentPrice);
+    a.append(title, pill, price);
+    li.append(a);
+    ul.append(li);
+  }
+}
+
 function renderLast(last) {
   $('last-empty').hidden = Boolean(last);
   $('last-body').hidden = !last;
@@ -59,6 +85,7 @@ async function refresh() {
         ? 'Gemini markets was unreachable on the last check: using the heuristic model only.'
         : 'Live Fed and recession odds from Gemini prediction markets feed every projection. No key required.';
     renderLast(status.lastAnalysis);
+    renderRecent(status.recent);
   } catch (err) {
     $('gem-hint').textContent = `Could not load status: ${err.message}`;
   }

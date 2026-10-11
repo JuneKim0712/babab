@@ -22,6 +22,7 @@ import {
   testContextDevConnection
 } from './context-dev.js';
 import { getPrediction, testGeminiConnection } from './gemini-prediction.js';
+import { addRecent } from './recent.js';
 import { clearPriceHistory, countTrackedProducts, historySignals, recordPrice } from './price-history.js';
 import { computeProjection, estimateVolatility } from './projection-engine.js';
 
@@ -196,8 +197,19 @@ async function runPipeline(page) {
 }
 
 async function recordLastAnalysis(result) {
-  const count = (await chrome.storage.local.get(STORAGE_KEYS.ANALYSIS_COUNT))[STORAGE_KEYS.ANALYSIS_COUNT] || 0;
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.ANALYSIS_COUNT, STORAGE_KEYS.RECENT_ANALYSES]);
+  const count = stored[STORAGE_KEYS.ANALYSIS_COUNT] || 0;
+  const entry = {
+    at: Date.now(),
+    asin: result.asin,
+    title: result.title,
+    currentPrice: result.projection.currentPrice,
+    deltaPercentMonth: result.projection.deltaPercentMonth,
+    action: result.projection.recommendation.action,
+    label: result.projection.recommendation.label
+  };
   await chrome.storage.local.set({
+    [STORAGE_KEYS.RECENT_ANALYSES]: addRecent(stored[STORAGE_KEYS.RECENT_ANALYSES] || [], entry),
     [STORAGE_KEYS.LAST_ANALYSIS]: {
       at: Date.now(),
       asin: result.asin,
@@ -218,7 +230,7 @@ async function recordLastAnalysis(result) {
 
 /** Snapshot used by the popup. Never exposes the key value itself. */
 async function getStatus() {
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.LAST_ANALYSIS, STORAGE_KEYS.ANALYSIS_COUNT]);
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.LAST_ANALYSIS, STORAGE_KEYS.ANALYSIS_COUNT, STORAGE_KEYS.RECENT_ANALYSES]);
   const contextKey = await getContextDevKey();
   return {
     contextKeySet: Boolean(contextKey.key),
@@ -226,7 +238,8 @@ async function getStatus() {
     cachedProducts: await countCachedProducts(),
     trackedProducts: await countTrackedProducts(),
     analysisCount: stored[STORAGE_KEYS.ANALYSIS_COUNT] || 0,
-    lastAnalysis: stored[STORAGE_KEYS.LAST_ANALYSIS] || null
+    lastAnalysis: stored[STORAGE_KEYS.LAST_ANALYSIS] || null,
+    recent: stored[STORAGE_KEYS.RECENT_ANALYSES] || []
   };
 }
 

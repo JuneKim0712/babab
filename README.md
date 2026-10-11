@@ -144,6 +144,7 @@ Key properties:
 | `src/background/service-worker.js` | Message router (`PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`), the analysis pipeline, in-flight request de-duplication, `last_analysis` bookkeeping, and the `onInstalled` handler (opens the welcome tab and injects content scripts into already-open Amazon tabs). Always replies `{ok, data}` or `{ok:false, error}`. |
 | `src/background/context-dev.js` | context.dev client. Calls `POST /v1/web/scrape` with `formats {json, markdown}` and a pricing JSON schema. `unwrapScrapeResponse` flattens the API's `{requested, success, data}` wrappers; `extractSignals` + `signalsFromMarkdown` turn the output into normalised signals (list price, current price, low/avg/high, discount %, rating, reviews, bought-past-month, category, availability). 24 h cache per ASIN (15 min negative cache for errors). `testContextDevConnection` uses a free endpoint. |
 | `src/background/gemini-prediction.js` | Two parts. (1) **Gemini prediction markets** client: fetches Economics events, `contractProbability`, `computeMacroSignal` (Fed hike/cut odds + recession odds to a sentiment multiplier and discount boost), `blendMacro`, 3 h cache with stale fallback. (2) **Heuristic model** `simulatePrediction`: deterministic, seeded by ASIN and ISO week; mean reversion vs typical/list price, seasonal sale calendar (`findSeasonalEvent`), category sale proneness. Always available as the fallback. |
+| `src/background/recent.js` | Pure `addRecent` for the popup's recent list. |
 | `src/background/price-history.js` | Local observation log. Pure helpers (`addObservation`, `summarize`, `historySignals`) plus chained storage writes (`recordPrice`). `historySignals` returns low/high/avg only after 3+ points over 2+ days; the worker merges them *under* context.dev signals. |
 | `src/background/projection-engine.js` | Pure functions, no `chrome.*`. `estimateVolatility`, `computeProjection`, `buildRecommendation`, `computeConfidence`, `formatUsd`. Contains the spec formulas (see below). |
 | `src/content/amazon-parser.js` | `PriceOracle.Parser`: ASIN (`#ASIN`, URL regex fallback), price (multiple selector fallbacks, `.a-offscreen` and whole/fraction), list price, category (breadcrumb, dropdown, nav), title, rating; `parseProduct()` returns null on non-product pages or when no price is present. Search helpers: `isSearchPage`, `getSearchCategory`, `getSearchCards`, `parseSearchCard`. |
@@ -162,6 +163,7 @@ Key properties:
 | `package.json` | Scripts: `test` (unit), `e2e`, `pack`, `icons`, `demo`. Dev dependencies: `puppeteer-core` (e2e) and `jsdom` (parser tests). |
 | `scripts/pack.mjs` | Builds `../PriceOracle.zip` (manifest, icons, src only) with a dependency-free, deterministic zip writer. |
 | `scripts/generate-icons.js` | Generates the PNG icons with a zero-dependency rasteriser. |
+| `tests/recent.test.mjs` | Unit tests for the recent list. |
 | `tests/history.test.mjs` | Unit tests for the local price history. |
 | `tests/parser.test.mjs` | DOM tests (jsdom) for `amazon-parser.js` using the mock pages as fixtures. |
 | `tests/widget.test.mjs` | Pure rendering tests for `widget-template.js`: escaping, tiers, chip states. |
@@ -239,7 +241,7 @@ deltaPercentMonth <= -4.0  ->  WAIT        >= +4.0  ->  BUY NOW        otherwise
 | `show_product_card`, `show_search_chips` | Options switches. Absent means on; `false` turns that surface off. Content scripts watch `chrome.storage.onChanged` and add or remove the UI live. |
 | `context_pause` | `{until, reason}`: circuit breaker set after a 401/402/403/429 from context.dev; no calls until `until` (30 min) or until settings are saved / Test Connection succeeds. |
 | `price_history` | `{ [ASIN]: [[timestamp, price], ...] }`: prices this browser has seen (max 40 points per ASIN, 300 ASINs, 120 days). Written by `price-history.js`. |
-| `last_analysis`, `analysis_count` | Popup display data. |
+| `last_analysis`, `recent_analyses`, `analysis_count` | Popup display data (`recent_analyses` holds the last 5 products, see `recent.js`). |
 
 Messages (content/popup/options to worker), names in `MSG`:
 `PO_ANALYZE_PRODUCT`, `PO_GET_STATUS`, `PO_TEST_CONNECTION`, `PO_OPEN_OPTIONS`, `PO_CLEAR_CACHE`, `PO_CLEAR_HISTORY`. Every response is `{ok:true,data}` or `{ok:false,error}`.

@@ -413,6 +413,9 @@ try {
     assert.ok(Number(await popup.$eval('#stat-count', (el) => el.textContent)) >= 3);
     assert.match(await popup.$eval('#ctx-status', (el) => el.textContent), /Default key active/);
     assert.match(await popup.$eval('#gem-status', (el) => el.textContent), /Live/);
+    assert.equal(await popup.$eval('#recent-card', (el) => el.hidden), false);
+    const links = await popup.$$eval('#recent-list a', (as) => as.map((a) => a.getAttribute('href')));
+    assert.ok(links.length >= 1 && links.every((h) => /^https:\/\/www\.amazon\.com\/dp\/[A-Z0-9]{10}$/.test(h)), JSON.stringify(links));
     assert.equal(await popup.$('#add-gemini'), null);
     assert.equal(await popup.$('#modal'), null);
     await popup.screenshot({ path: path.join(shots, '05-popup.png') });
