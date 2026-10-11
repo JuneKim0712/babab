@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests
+        working-directory: amazon-price-oracle
+        run: npm test
+      - name: Manifest is valid JSON with a version
+        working-directory: amazon-price-oracle
+        run: node -e "const m=require('./manifest.json'); if(m.manifest_version!==3||!m.version) process.exit(1); console.log('manifest', m.version)"
+      - name: Zip builds
+        working-directory: amazon-price-oracle
+        run: npm run pack -- /tmp/PriceOracle.zip && unzip -t /tmp/PriceOracle.zip

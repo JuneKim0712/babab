@@ -1,0 +1,36 @@
+name: Release
+
+# Push a tag like v1.0.0 to publish a GitHub Release with PriceOracle.zip attached.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tag matches manifest version
+        working-directory: amazon-price-oracle
+        run: |
+          v=$(node -p "require('./manifest.json').version")
+          if [ "v$v" != "${GITHUB_REF_NAME}" ]; then echo "Tag ${GITHUB_REF_NAME} != manifest version v$v"; exit 1; fi
+      - name: Unit tests
+        working-directory: amazon-price-oracle
+        run: npm test
+      - name: Build zip
+        working-directory: amazon-price-oracle
+        run: npm run pack -- "$GITHUB_WORKSPACE/PriceOracle.zip"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" PriceOracle.zip \
+            --title "PriceOracle $GITHUB_REF_NAME" \
+            --notes "Download PriceOracle.zip, unzip, then chrome://extensions > Developer mode > Load unpacked. See the README for details."
