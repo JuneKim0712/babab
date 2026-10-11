@@ -9,7 +9,7 @@
  *       | { status: 'error', error: string }
  *       | { status: 'ready', data: AnalysisResult }   (see service-worker.js)
  *
- * Interactive elements carry `data-action` attributes ("configure", "retry");
+ * Interactive elements carry `data-action` attributes ("retry");
  * content.js wires a single delegated click listener.
  */
 (function (root) {
@@ -81,9 +81,10 @@
     .po-note { font-size: 11px; color: #64748b; }
     .po-btn { font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; border-radius: 999px; padding: 3px 10px;
       border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; text-align: left; }
-    .po-btn:hover { background: #e0e7ff; }
+    button.po-btn:hover { background: #e0e7ff; }
     .po-btn:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
-    .po-btn.ok { cursor: default; background: #ecfdf5; border-color: #a7f3d0; color: #047857; }
+    span.po-btn { cursor: default; }
+    .po-btn.ok { background: #ecfdf5; border-color: #a7f3d0; color: #047857; }
     .po-btn.err { background: #fffbeb; border-color: #fde68a; color: #b45309; }
 
     .po-skel { border-radius: 8px; background: linear-gradient(90deg, #eef2f7 25%, #f8fafc 50%, #eef2f7 75%);
@@ -159,13 +160,12 @@
   }
 
   function renderGeminiStatus(gemini) {
-    if (gemini.keyStatus === 'active') {
-      return `<span class="po-btn ok" title="${escapeHtml(gemini.rationale)}">Gemini live forecast active</span>`;
+    if (gemini.status === 'live') {
+      const detail = gemini.summary ? ` — ${escapeHtml(gemini.summary)}` : '';
+      const stale = gemini.stale ? ' (cached)' : '';
+      return `<span class="po-btn ok" title="${escapeHtml(gemini.rationale)}">Gemini Markets: Live${stale}${detail}</span>`;
     }
-    if (gemini.keyStatus === 'error') {
-      return `<button class="po-btn err" type="button" data-action="configure" title="${escapeHtml(gemini.error || '')}">Gemini error: ${escapeHtml(gemini.error || 'request failed')} — running on heuristic model, click to fix</button>`;
-    }
-    return `<button class="po-btn" type="button" data-action="configure">Gemini Key: Pending (Running on heuristic model - click to configure)</button>`;
+    return `<span class="po-btn err" title="${escapeHtml(gemini.error || '')}">Gemini Markets: Offline — running on heuristic model</span>`;
   }
 
   function renderReady({ projection, meta }) {

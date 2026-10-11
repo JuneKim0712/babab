@@ -51,11 +51,14 @@ async function refresh() {
     $('stat-count').textContent = status.analysisCount;
     $('stat-cache').textContent = status.cachedProducts;
     setBadge($('ctx-status'), status.contextKeySet, status.usingDefaultContextKey ? 'Default key active' : 'Custom key active');
-    setBadge($('gem-status'), status.geminiKeySet, status.geminiKeySet ? 'Key saved' : 'Pending');
-    $('gem-hint').textContent = status.geminiKeySet
-      ? 'Live Gemini forecasts are enabled.'
-      : 'No Gemini key yet: running on the heuristic prediction model.';
-    $('add-gemini').textContent = status.geminiKeySet ? 'Update Gemini key' : 'Add Gemini key';
+    const gem = status.lastAnalysis?.geminiStatus;
+    setBadge($('gem-status'), gem !== 'offline', gem === 'live' ? 'Live' : gem === 'offline' ? 'Offline' : 'Ready');
+    setBadge($('gem-key-status'), true, status.geminiKeySet ? 'Saved' : 'Not needed');
+    $('gem-hint').textContent =
+      gem === 'offline'
+        ? 'Gemini markets was unreachable on the last check: using the heuristic model only.'
+        : 'Live Fed and recession odds from Gemini prediction markets feed every projection. No key required.';
+    $('add-gemini').textContent = status.geminiKeySet ? 'Update Gemini key' : 'Gemini key (optional)';
     renderLast(status.lastAnalysis);
   } catch (err) {
     $('gem-hint').textContent = `Could not load status: ${err.message}`;
@@ -84,12 +87,12 @@ function closeModal() {
 async function saveGeminiKey() {
   const value = $('gemini-input').value.trim();
   if (!value) {
-    showMessage('Paste a Gemini API key, or open Settings to remove the saved one.', 'err');
+    showMessage('Paste a key, or open Settings to remove the saved one.', 'err');
     return;
   }
   await chrome.storage.local.set({ [STORAGE_KEYS.GEMINI_KEY]: value });
-  await chrome.storage.local.remove(STORAGE_KEYS.PREDICTION_CACHE);
-  showMessage('Saved. Refresh an Amazon tab to use live forecasts.', 'ok');
+  await chrome.storage.local.remove(STORAGE_KEYS.MACRO_CACHE);
+  showMessage('Saved.', 'ok');
   await refresh();
   setTimeout(closeModal, 1100);
 }

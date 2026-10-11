@@ -17,8 +17,8 @@ function banner(text, kind) {
 
 function updateGeminiState(hasKey) {
   $('gemini-state').textContent = hasKey
-    ? 'Status: key saved — live Gemini forecasts enabled.'
-    : 'Status: pending — running on the heuristic model until a key is saved.';
+    ? 'Status: key saved (optional). Live Gemini market data is enabled either way.'
+    : 'Status: no key — fine, Gemini market data is public and still used.';
 }
 
 async function load() {
@@ -46,10 +46,10 @@ async function save(event) {
   } else {
     await chrome.storage.local.remove(STORAGE_KEYS.GEMINI_KEY);
   }
-  await chrome.storage.local.remove(STORAGE_KEYS.PREDICTION_CACHE);
+  await chrome.storage.local.remove(STORAGE_KEYS.MACRO_CACHE);
 
   updateGeminiState(Boolean(geminiKey));
-  banner(geminiKey ? 'Settings saved. Live Gemini forecasts are on.' : 'Settings saved. Running on the heuristic model.', 'ok');
+  banner('Settings saved.', 'ok');
 }
 
 function showResult(prefix, result) {

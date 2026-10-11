@@ -1,43 +1,58 @@
 /**
- * Gemini prediction client with a graceful heuristic fallback.
+ * Gemini prediction-markets client + heuristic model.
  *
- * - Key present  -> asks Google's Gemini API (structured JSON output) for a
- *                   market sentiment multiplier (0.85-1.15), a discount
- *                   probability (0-1) and an optional expected price drift.
- * - Key missing  -> runs "Prediction Simulation Mode": a deterministic model
- *                   built from historical-volatility hints, price-vs-typical
- *                   mean reversion and the Amazon seasonal sale calendar.
- *                   Results are flagged `isSimulated: true`.
+ * Data source: https://developer.gemini.com/prediction-markets-spec/markets
+ * (`GET /v1/prediction-markets/events`). These market-data endpoints are public;
+ * contract prices are probabilities (0-1). PriceOracle reads the "Economics"
+ * category once, extracts
+ *   - the next Fed decision (probability of a hike vs. a cut), and
+ *   - the "Recession this year?" market,
+ * and turns them into a sentiment multiplier (0.85-1.15) and a discount-
+ * probability boost that are blended into the per-product heuristic model.
+ * Rate-hike odds mean inflation pressure (prices up); recession odds mean weaker
+ * demand (more discounts).
  *
- * The same simulation also covers any Gemini failure (bad key, quota,
- * network) so the widget never breaks; `keyStatus` tells the UI which case it is.
+ * No key is required. An optional key is stored in chrome.storage.local and sent
+ * in the `X-GEMINI-APIKEY` header. If Gemini markets cannot be reached, the
+ * extension falls back to the heuristic model alone ("Prediction Simulation
+ * Mode", `isSimulated: true`) and never breaks.
  */
 import {
-  GEMINI_GENERATE_URL,
-  GEMINI_MODELS_URL,
-  PREDICTION_CACHE_TTL_MS,
-  CACHE_MAX_ENTRIES,
+  GEMINI_MARKETS_BASE,
+  MACRO_CACHE_TTL_MS,
+  MACRO_STALE_MAX_MS,
   STORAGE_KEYS
 } from '../shared/constants.js';
 
-const REQUEST_TIMEOUT_MS = 20000;
+const REQUEST_TIMEOUT_MS = 15000;
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
 /**
+ * @typedef {Object} MacroSignal
+ * @property {string|null} fedEvent        Title of the next Fed-decision market.
+ * @property {number} hike                 Summed probability of any hike (0-1).
+ * @property {number} cut                  Summed probability of any cut (0-1).
+ * @property {number|null} recession       Probability of recession (0-1), null if no market found.
+ * @property {number} sentimentMultiplier  0.85-1.15.
+ * @property {number} discountProbabilityBoost  0-0.2.
+ * @property {string} summary              Human-readable one-liner.
+ * @property {number} fetchedAt
+ * @property {boolean} [stale]             True when served from an old cache after a failed refresh.
+ *
  * @typedef {Object} Prediction
  * @property {number} sentimentMultiplier  0.85-1.15 (<1 = prices expected to fall).
  * @property {number} discountProbability  0-1 chance of a notable discount within 30 days.
  * @property {number} priceDrift           Additive fraction applied to the mid price (-0.15..0.15).
- * @property {boolean} isSimulated         True when produced by the heuristic model.
- * @property {'gemini'|'heuristic'} source
- * @property {'active'|'pending'|'error'} keyStatus  pending = no key saved.
+ * @property {boolean} isSimulated         True when no live Gemini market data was available.
+ * @property {'gemini-markets'|'heuristic'} source
+ * @property {'live'|'offline'} marketsStatus
  * @property {string} rationale            One-line explanation shown in tooltips.
- * @property {string} [error]              Why Gemini was bypassed (keyStatus 'error').
- * @property {boolean} [fromCache]
+ * @property {MacroSignal|null} macro
+ * @property {string} [error]              Why Gemini markets was bypassed.
  */
 
 /**
- * Get a prediction for a product, using Gemini when configured.
+ * Get a prediction for a product: heuristic model + live Gemini market odds.
  *
  * @param {Object} input
  * @param {string} input.asin
@@ -51,82 +66,92 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
  * @returns {Promise<Prediction>}
  */
 export async function getPrediction(input) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.GEMINI_KEY);
-  const apiKey = (stored[STORAGE_KEYS.GEMINI_KEY] || '').trim();
-
-  if (!apiKey) {
-    return { ...simulatePrediction(input), keyStatus: 'pending' };
-  }
-
-  const cacheKey = `${input.asin}:${Math.round(input.price)}`;
-  const cached = await readPredictionCache(cacheKey);
-  if (cached) return { ...cached, fromCache: true };
-
-  const baseline = simulatePrediction(input);
+  const base = simulatePrediction(input);
   try {
-    const remote = await requestGeminiForecast(apiKey, input, baseline);
-    const result = {
-      sentimentMultiplier: remote.sentimentMultiplier,
-      discountProbability: remote.discountProbability,
-      priceDrift: remote.priceDrift ?? baseline.priceDrift,
-      isSimulated: false,
-      source: 'gemini',
-      keyStatus: 'active',
-      rationale: remote.rationale || 'Gemini market forecast'
-    };
-    await writePredictionCache(cacheKey, result);
-    return result;
+    const macro = await getMacroSignal(input.now);
+    return blendMacro(base, macro);
   } catch (err) {
     return {
-      ...baseline,
-      keyStatus: 'error',
+      ...base,
+      marketsStatus: 'offline',
+      macro: null,
       error: err instanceof Error ? err.message : String(err)
     };
   }
 }
 
+/**
+ * Blend a macro signal into the heuristic forecast.
+ * @param {Prediction} base
+ * @param {MacroSignal} macro
+ * @returns {Prediction}
+ */
+export function blendMacro(base, macro) {
+  return {
+    ...base,
+    sentimentMultiplier: round(clamp(base.sentimentMultiplier * macro.sentimentMultiplier, 0.85, 1.15), 3),
+    discountProbability: round(clamp(base.discountProbability + macro.discountProbabilityBoost, 0.05, 0.95), 3),
+    priceDrift: round(clamp(base.priceDrift + (macro.sentimentMultiplier - 1) * 0.5, -0.15, 0.15), 4),
+    isSimulated: false,
+    source: 'gemini-markets',
+    marketsStatus: 'live',
+    macro,
+    rationale: `${base.rationale} Gemini markets: ${macro.summary}.`
+  };
+}
+
 // ---------------------------------------------------------------------------
-// Gemini (live) mode
+// Gemini prediction markets (live)
 // ---------------------------------------------------------------------------
 
-async function requestGeminiForecast(apiKey, input, baseline) {
+/**
+ * Read the macro signal, using a 3-hour cache. Falls back to a stale cached
+ * reading (up to 24 h old) if Gemini cannot be reached.
+ * @param {Date} [now]
+ * @returns {Promise<MacroSignal>}
+ */
+export async function getMacroSignal(now = new Date()) {
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.MACRO_CACHE, STORAGE_KEYS.GEMINI_KEY]);
+  const cached = stored[STORAGE_KEYS.MACRO_CACHE];
+  const age = cached ? Date.now() - cached.fetchedAt : Infinity;
+  if (cached && age < MACRO_CACHE_TTL_MS) return cached;
+
+  try {
+    const events = await fetchEconomicsEvents((stored[STORAGE_KEYS.GEMINI_KEY] || '').trim());
+    const macro = computeMacroSignal(events, now);
+    await chrome.storage.local.set({ [STORAGE_KEYS.MACRO_CACHE]: macro });
+    return macro;
+  } catch (err) {
+    if (cached && age < MACRO_STALE_MAX_MS) return { ...cached, stale: true };
+    throw err;
+  }
+}
+
+/**
+ * GET /v1/prediction-markets/events?status=active&category=Economics
+ * @param {string} [apiKey] Optional key, sent as X-GEMINI-APIKEY.
+ * @returns {Promise<any[]>} The `data` array of events.
+ */
+export async function fetchEconomicsEvents(apiKey = '') {
+  const url = `${GEMINI_MARKETS_BASE}/events?status=active&category=Economics&limit=50`;
+  const body = await geminiGet(url, apiKey);
+  if (!Array.isArray(body?.data)) throw new Error('Gemini markets returned an unexpected response');
+  return body.data;
+}
+
+async function geminiGet(url, apiKey) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(GEMINI_GENERATE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: buildPrompt(input, baseline) }] }],
-        generationConfig: {
-          temperature: 0.2,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'OBJECT',
-            properties: {
-              sentimentMultiplier: { type: 'NUMBER' },
-              discountProbability: { type: 'NUMBER' },
-              priceDrift: { type: 'NUMBER' },
-              rationale: { type: 'STRING' }
-            },
-            required: ['sentimentMultiplier', 'discountProbability']
-          }
-        }
-      }),
+    const res = await fetch(url, {
+      headers: apiKey ? { 'X-GEMINI-APIKEY': apiKey } : {},
       signal: controller.signal
     });
-
-    if (res.status === 400 || res.status === 401 || res.status === 403) {
-      throw new Error(`Gemini rejected the API key (HTTP ${res.status})`);
-    }
-    if (res.status === 429) throw new Error('Gemini quota exceeded (HTTP 429)');
-    if (!res.ok) throw new Error(`Gemini request failed (HTTP ${res.status})`);
-
-    const body = await res.json();
-    const text = body?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
-    return parseForecast(text);
+    if (res.status === 429) throw new Error('Gemini markets rate limit reached (HTTP 429)');
+    if (!res.ok) throw new Error(`Gemini markets request failed (HTTP ${res.status})`);
+    return await res.json();
   } catch (err) {
-    if (err && err.name === 'AbortError') throw new Error('Gemini request timed out');
+    if (err && err.name === 'AbortError') throw new Error('Gemini markets request timed out');
     throw err;
   } finally {
     clearTimeout(timer);
@@ -134,83 +159,91 @@ async function requestGeminiForecast(apiKey, input, baseline) {
 }
 
 /**
- * Parse and sanitise the model's JSON answer.
- * @param {string} text
+ * Probability (0-1) of a contract's "yes" side: bid/ask midpoint, else the last
+ * trade, else null (illiquid contracts often have no quotes).
+ * Prices arrive as strings, e.g. "0.86".
+ * @param {{prices?: {bestBid?: string|null, bestAsk?: string|null, lastTradePrice?: string|null}}} contract
+ * @returns {number|null}
  */
-export function parseForecast(text) {
-  const match = String(text).match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('Gemini returned no JSON');
-  let raw;
-  try {
-    raw = JSON.parse(match[0]);
-  } catch {
-    throw new Error('Gemini returned malformed JSON');
-  }
-  const sentiment = Number(raw.sentimentMultiplier);
-  const probability = Number(raw.discountProbability);
-  if (!Number.isFinite(sentiment) || !Number.isFinite(probability)) {
-    throw new Error('Gemini response missing required fields');
-  }
-  const drift = Number(raw.priceDrift);
-  return {
-    sentimentMultiplier: clamp(sentiment, 0.85, 1.15),
-    // Tolerate answers given as percentages (e.g. 35 instead of 0.35).
-    discountProbability: clamp(probability > 1 ? probability / 100 : probability, 0, 1),
-    priceDrift: Number.isFinite(drift) ? clamp(drift, -0.15, 0.15) : undefined,
-    rationale: typeof raw.rationale === 'string' ? raw.rationale.slice(0, 240) : ''
-  };
-}
-
-function buildPrompt(input, baseline) {
-  const { signals = {} } = input;
-  const facts = {
-    title: input.title || undefined,
-    category: input.category || signals.category || undefined,
-    currentPriceUsd: input.price,
-    listPriceUsd: input.listPrice || signals.listPrice,
-    typicalPriceUsd: signals.avgPrice,
-    lowPriceUsd: signals.lowPrice,
-    highPriceUsd: signals.highPrice,
-    rating: signals.rating,
-    reviewCount: signals.reviewCount,
-    boughtPastMonth: signals.boughtPastMonth,
-    estimatedMonthlyVolatility: input.volatility,
-    todayIso: (input.now || new Date()).toISOString().slice(0, 10),
-    upcomingSeasonalEvent: baseline.event || undefined
-  };
-  return [
-    'You are a retail price-forecasting model for Amazon.com products.',
-    'Given the facts below, forecast the next 30 days and answer ONLY with JSON:',
-    '- sentimentMultiplier: number 0.85-1.15 (below 1 = price expected to fall, above 1 = expected to rise).',
-    '- discountProbability: number 0-1, chance of a notable discount in the next 30 days.',
-    '- priceDrift: number -0.15..0.15, expected fractional change of the fair price over 30 days (e.g. -0.06 = 6% drop).',
-    '- rationale: one short sentence.',
-    `Facts: ${JSON.stringify(facts)}`
-  ].join('\n');
+export function contractProbability(contract) {
+  const { bestBid, bestAsk, lastTradePrice } = contract?.prices || {};
+  const bid = parseFloat(bestBid);
+  const ask = parseFloat(bestAsk);
+  if (Number.isFinite(bid) && Number.isFinite(ask)) return clamp((bid + ask) / 2, 0, 1);
+  const last = parseFloat(lastTradePrice);
+  return Number.isFinite(last) ? clamp(last, 0, 1) : null;
 }
 
 /**
- * Validate a Gemini key without spending generation quota.
- * @param {string} apiKey
+ * Turn Economics events into the macro signal. Pure; unit tested.
+ *
+ *   inflationPressure = P(hike) - P(cut)                       (-1..1)
+ *   sentiment         = 1 + 0.10 * inflationPressure - 0.50 * P(recession)
+ *   discountBoost     = 0.40 * P(recession) + 0.10 * max(0, -inflationPressure)
+ *
+ * @param {any[]} events
+ * @param {Date} [now]
+ * @returns {MacroSignal}
+ */
+export function computeMacroSignal(events, now = new Date()) {
+  const upcoming = (e) => !e.expiryDate || new Date(e.expiryDate) >= now;
+
+  const fed = events
+    .filter((e) => /^FED\d/i.test(e.ticker || '') && upcoming(e))
+    .sort((a, b) => String(a.expiryDate).localeCompare(String(b.expiryDate)))[0];
+  const recessionEvent = events.find((e) => /^RECESSION/i.test(e.ticker || '') || /recession/i.test(e.title || ''));
+
+  if (!fed && !recessionEvent) throw new Error('No Fed or recession markets found on Gemini');
+
+  let hike = 0;
+  let cut = 0;
+  for (const contract of fed?.contracts || []) {
+    const p = contractProbability(contract) ?? 0;
+    if (/hike|raise/i.test(contract.label || '')) hike += p;
+    else if (/cut|lower/i.test(contract.label || '')) cut += p;
+  }
+  hike = clamp(hike, 0, 1);
+  cut = clamp(cut, 0, 1);
+
+  const yes = recessionEvent?.contracts?.find((c) => /^yes$/i.test(c.label || '')) || recessionEvent?.contracts?.[0];
+  const recession = yes ? contractProbability(yes) : null;
+
+  const inflationPressure = clamp(hike - cut, -1, 1);
+  const r = recession ?? 0;
+  const pct = (n) => `${Math.round(n * 100)}%`;
+  const parts = [];
+  if (fed) parts.push(`Fed hike odds ${pct(hike)}, cut odds ${pct(cut)}`);
+  if (recession !== null) parts.push(`recession odds ${pct(recession)}`);
+
+  return {
+    fedEvent: fed?.title ?? null,
+    hike: round(hike, 3),
+    cut: round(cut, 3),
+    recession: recession === null ? null : round(recession, 3),
+    sentimentMultiplier: round(clamp(1 + 0.1 * inflationPressure - 0.5 * r, 0.85, 1.15), 4),
+    discountProbabilityBoost: round(clamp(0.4 * r + 0.1 * Math.max(0, -inflationPressure), 0, 0.2), 4),
+    summary: parts.join(' · '),
+    fetchedAt: Date.now()
+  };
+}
+
+/**
+ * Reachability check for "Test Connection". Calls the lightweight categories
+ * endpoint (the market data is public, so the key is optional).
+ * @param {string} [apiKey]
  * @returns {Promise<{ok: boolean, message: string}>}
  */
-export async function testGeminiConnection(apiKey) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+export async function testGeminiConnection(apiKey = '') {
   try {
-    const res = await fetch(`${GEMINI_MODELS_URL}?pageSize=1`, {
-      headers: { 'x-goog-api-key': apiKey },
-      signal: controller.signal
-    });
-    if (res.ok) return { ok: true, message: 'Connected — API key accepted' };
-    if (res.status === 400 || res.status === 401 || res.status === 403) {
-      return { ok: false, message: `API key rejected (HTTP ${res.status})` };
-    }
-    return { ok: false, message: `Unexpected response (HTTP ${res.status})` };
+    const body = await geminiGet(`${GEMINI_MARKETS_BASE}/categories`, apiKey);
+    const count = Array.isArray(body?.categories) ? body.categories.length : 0;
+    return {
+      ok: true,
+      message: `Connected — Gemini prediction markets reachable (${count} categories). Market data is public; an API key is optional.`
+    };
   } catch (err) {
-    return { ok: false, message: err && err.name === 'AbortError' ? 'Request timed out' : 'Network error — endpoint unreachable' };
-  } finally {
-    clearTimeout(timer);
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: /abort|fetch|network/i.test(message) ? 'Network error — api.gemini.com unreachable' : message };
   }
 }
 
@@ -352,7 +385,8 @@ export function simulatePrediction({ asin = '', price, listPrice, category = '',
     priceDrift: round(drift, 4),
     isSimulated: true,
     source: 'heuristic',
-    keyStatus: 'pending',
+    marketsStatus: 'offline',
+    macro: null,
     rationale: parts.length ? `Heuristic model: ${parts.join('; ')}.` : 'Heuristic model: no strong seasonal or price-level signal.',
     event: event ? eventNote : undefined
   };
@@ -389,26 +423,4 @@ function mulberry32(seed) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-// ---------------------------------------------------------------------------
-// Prediction cache
-// ---------------------------------------------------------------------------
-
-async function readPredictionCache(key) {
-  const data = await chrome.storage.local.get(STORAGE_KEYS.PREDICTION_CACHE);
-  const entry = (data[STORAGE_KEYS.PREDICTION_CACHE] || {})[key];
-  return entry && Date.now() - entry.at < PREDICTION_CACHE_TTL_MS ? entry.value : null;
-}
-
-async function writePredictionCache(key, value) {
-  const data = await chrome.storage.local.get(STORAGE_KEYS.PREDICTION_CACHE);
-  let cache = data[STORAGE_KEYS.PREDICTION_CACHE] || {};
-  cache[key] = { at: Date.now(), value };
-  const entries = Object.entries(cache);
-  if (entries.length > CACHE_MAX_ENTRIES) {
-    entries.sort((a, b) => b[1].at - a[1].at);
-    cache = Object.fromEntries(entries.slice(0, CACHE_MAX_ENTRIES));
-  }
-  await chrome.storage.local.set({ [STORAGE_KEYS.PREDICTION_CACHE]: cache });
 }

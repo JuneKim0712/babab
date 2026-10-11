@@ -34,10 +34,28 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === 'install') {
-    chrome.storage.local.set({ [STORAGE_KEYS.ANALYSIS_COUNT]: 0 });
-  }
+  if (details.reason !== 'install') return;
+  chrome.storage.local.set({ [STORAGE_KEYS.ANALYSIS_COUNT]: 0 });
+  chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome/welcome.html') });
+  injectIntoOpenAmazonTabs();
 });
+
+/**
+ * Chrome does not run content scripts in tabs that were already open when the
+ * extension was installed. Inject them now so the widget works without a reload.
+ */
+async function injectIntoOpenAmazonTabs() {
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const files = manifest.content_scripts?.[0]?.js || [];
+    const tabs = await chrome.tabs.query({ url: ['https://www.amazon.com/*', 'https://amazon.com/*'] });
+    await Promise.allSettled(
+      tabs.filter((t) => t.id !== undefined).map((t) => chrome.scripting.executeScript({ target: { tabId: t.id }, files }))
+    );
+  } catch (err) {
+    console.warn('PriceOracle: could not inject into open tabs', err);
+  }
+}
 
 /**
  * @param {{type: string, [k: string]: any}} message
@@ -56,7 +74,7 @@ async function handleMessage(message) {
       return true;
     case MSG.CLEAR_CACHE:
       await clearContextCache();
-      await chrome.storage.local.remove(STORAGE_KEYS.PREDICTION_CACHE);
+      await chrome.storage.local.remove(STORAGE_KEYS.MACRO_CACHE);
       return true;
     default:
       throw new Error(`Unknown message type: ${message.type}`);
@@ -137,10 +155,12 @@ async function runPipeline(page) {
         error: context.error
       },
       gemini: {
-        keyStatus: prediction.keyStatus,
+        status: prediction.marketsStatus,
         isSimulated: prediction.isSimulated,
         source: prediction.source,
         rationale: prediction.rationale,
+        summary: prediction.macro?.summary || '',
+        stale: Boolean(prediction.macro?.stale),
         sentimentMultiplier: prediction.sentimentMultiplier,
         discountProbability: prediction.discountProbability,
         error: prediction.error
@@ -166,7 +186,8 @@ async function recordLastAnalysis(result) {
       action: result.projection.recommendation.action,
       label: result.projection.recommendation.label,
       confidence: result.projection.confidence,
-      isSimulated: result.meta.gemini.isSimulated
+      isSimulated: result.meta.gemini.isSimulated,
+      geminiStatus: result.meta.gemini.status
     },
     [STORAGE_KEYS.ANALYSIS_COUNT]: count + 1
   });
@@ -200,11 +221,6 @@ async function testConnections(keys) {
   const contextKey = (keys.contextDev || '').trim() || (await getContextDevKey()).key || DEFAULT_CONTEXT_DEV_KEY;
   const geminiKey = (keys.gemini || '').trim() || (stored[STORAGE_KEYS.GEMINI_KEY] || '').trim();
 
-  const [contextDev, gemini] = await Promise.all([
-    testContextDevConnection(contextKey),
-    geminiKey
-      ? testGeminiConnection(geminiKey)
-      : Promise.resolve({ ok: false, skipped: true, message: 'No Gemini key set — running on heuristic model' })
-  ]);
+  const [contextDev, gemini] = await Promise.all([testContextDevConnection(contextKey), testGeminiConnection(geminiKey)]);
   return { contextDev, gemini };
 }

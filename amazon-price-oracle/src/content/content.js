@@ -17,7 +17,7 @@
   root.__priceOracleLoaded = true;
 
   /** Mirrors MSG in src/shared/constants.js (content scripts cannot import modules). */
-  const MSG = { ANALYZE_PRODUCT: 'PO_ANALYZE_PRODUCT', OPEN_OPTIONS: 'PO_OPEN_OPTIONS' };
+  const MSG = { ANALYZE_PRODUCT: 'PO_ANALYZE_PRODUCT' };
   const HOST_ID = 'price-oracle-host';
   const DEBOUNCE_MS = 350;
   const CONTAINER_SELECTORS = ['#ppd', '#dp-container', '#centerCol', '#dp', '#a-page'];
@@ -80,9 +80,7 @@
     const target = event.target instanceof Element ? event.target.closest('[data-action]') : null;
     if (!target) return;
     const action = target.getAttribute('data-action');
-    if (action === 'configure') {
-      sendMessage({ type: MSG.OPEN_OPTIONS }).catch(() => {});
-    } else if (action === 'retry' && lastParsed) {
+    if (action === 'retry' && lastParsed) {
       analyze(lastParsed, true);
     }
   }

@@ -16,18 +16,19 @@ export const CONTEXT_DEV_ENDPOINT = 'https://api.context.dev/v1/web/scrape';
 /** Free, authenticated endpoint used by "Test Connection" (consumes no credits). */
 export const CONTEXT_DEV_AUTH_CHECK_URL = 'https://api.context.dev/v1/org/logs?limit=1';
 
-/** Google Gemini (Generative Language) API used for the structured forecast. */
-export const GEMINI_MODEL = 'gemini-2.0-flash';
-export const GEMINI_GENERATE_URL =
-  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-export const GEMINI_MODELS_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+/**
+ * Gemini prediction markets (gemini.com). The public market-data endpoints need
+ * no API key; an optional key is sent in the X-GEMINI-APIKEY header.
+ * Docs: https://developer.gemini.com/prediction-markets-spec/markets
+ */
+export const GEMINI_MARKETS_BASE = 'https://api.gemini.com/v1/prediction-markets';
 
 /** chrome.storage.local keys. */
 export const STORAGE_KEYS = Object.freeze({
   GEMINI_KEY: 'gemini_api_key',
   CONTEXT_KEY: 'context_dev_api_key',
   CONTEXT_CACHE: 'context_cache',
-  PREDICTION_CACHE: 'prediction_cache',
+  MACRO_CACHE: 'gemini_macro_cache',
   LAST_ANALYSIS: 'last_analysis',
   ANALYSIS_COUNT: 'analysis_count'
 });
@@ -36,9 +37,11 @@ export const STORAGE_KEYS = Object.freeze({
 export const CONTEXT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 /** Failed lookups are remembered briefly so a flaky API is not hammered. */
 export const CONTEXT_ERROR_TTL_MS = 15 * 60 * 1000;
-/** Gemini forecasts are cached for 6 hours per ASIN + price. */
-export const PREDICTION_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-/** Max ASIN entries kept in each cache. */
+/** Macro odds from Gemini markets move slowly; refresh at most every 3 hours. */
+export const MACRO_CACHE_TTL_MS = 3 * 60 * 60 * 1000;
+/** If Gemini markets is unreachable, reuse a cached reading up to this old. */
+export const MACRO_STALE_MAX_MS = 24 * 60 * 60 * 1000;
+/** Max ASIN entries kept in the context cache. */
 export const CACHE_MAX_ENTRIES = 200;
 
 /** Message types exchanged between content script / popup / options and the service worker. */

@@ -43,12 +43,16 @@
         <span id="ctx-status" class="badge"></span>
       </div>
       <div class="key-row">
-        <span>Gemini</span>
+        <span>Gemini markets</span>
         <span id="gem-status" class="badge"></span>
+      </div>
+      <div class="key-row">
+        <span>Gemini API key</span>
+        <span id="gem-key-status" class="badge"></span>
       </div>
       <p id="gem-hint" class="muted small"></p>
       <div class="actions">
-        <button id="add-gemini" class="btn primary" type="button">Add Gemini key</button>
+        <button id="add-gemini" class="btn primary" type="button">Gemini key (optional)</button>
         <button id="clear-cache" class="btn" type="button">Clear cache</button>
       </div>
     </section>
@@ -57,8 +61,8 @@
   <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
     <div class="modal-card">
       <h2 id="modal-title">Gemini API key</h2>
-      <p class="muted small">Stored only in this browser (<code>chrome.storage.local</code>). Leave empty to keep using the built-in heuristic model.</p>
-      <label for="gemini-input" class="label">API key</label>
+      <p class="muted small">Optional. Gemini prediction-market data is public, so PriceOracle works without a key. If you save one it is stored only in this browser (<code>chrome.storage.local</code>) and sent as <code>X-GEMINI-APIKEY</code>.</p>
+      <label for="gemini-input" class="label">Gemini API key</label>
       <input id="gemini-input" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" />
       <div id="modal-msg" class="msg" role="status" hidden></div>
       <div class="actions end">

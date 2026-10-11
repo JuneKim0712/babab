@@ -5,13 +5,13 @@
  * Serves, over HTTPS with a throw-away self-signed certificate:
  *   - https://www.amazon.com/dp/<ASIN>  -> test-page/amazon-product.html (mock product page)
  *   - POST /v1/web/scrape, GET /v1/org/logs -> mock context.dev (host api.context.dev)
- *   - GET  /v1beta/models               -> mock Gemini key check (host generativelanguage.googleapis.com)
- *   - POST /v1beta/models/*             -> mock Gemini forecast
+ *   - GET  /v1/prediction-markets/*     -> mock Gemini prediction markets (host api.gemini.com)
+ *   - GET  /__control?marketsDown=1|0   -> make the mock Gemini markets fail (tests the offline fallback)
  *   - GET  /__stats                     -> request counters (used by tests/e2e.mjs)
  *
  * Launch Chrome so those hostnames resolve here:
  *   google-chrome \
- *     --host-resolver-rules="MAP www.amazon.com 127.0.0.1:$PORT, MAP api.context.dev 127.0.0.1:$PORT, MAP generativelanguage.googleapis.com 127.0.0.1:$PORT" \
+ *     --host-resolver-rules="MAP www.amazon.com 127.0.0.1:$PORT, MAP api.context.dev 127.0.0.1:$PORT, MAP api.gemini.com 127.0.0.1:$PORT" \
  *     --ignore-certificate-errors --load-extension=/path/to/amazon-price-oracle \
  *     https://www.amazon.com/dp/B0CX23V258
  */
@@ -26,7 +26,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 44391);
 const DEFAULT_KEY = 'ctxt_secret_7390b0f7f788470c85aa687254599803';
 
-export const stats = { extract: 0, extractAuthOk: 0, gemini: 0, geminiKeyCheck: 0, lastExtractBody: null };
+export const stats = { extract: 0, extractAuthOk: 0, markets: 0, categories: 0, lastGeminiKeyHeader: null, marketsDown: false, lastExtractBody: null };
 
 function ensureCert() {
   const dir = path.join(os.tmpdir(), 'price-oracle-demo-cert');
@@ -84,18 +84,27 @@ export function createServer() {
       });
     }
 
-    if (host === 'generativelanguage.googleapis.com') {
-      if (!req.headers['x-goog-api-key'] || req.headers['x-goog-api-key'] === 'bad-key') return json(res, 403, { error: 'bad key' });
-      if (req.method === 'GET') {
-        stats.geminiKeyCheck++;
-        return json(res, 200, { models: [] });
+    if (url.pathname === '/__control') {
+      stats.marketsDown = url.searchParams.get('marketsDown') === '1';
+      return json(res, 200, stats);
+    }
+
+    if (host === 'api.gemini.com' && url.pathname.startsWith('/v1/prediction-markets/')) {
+      stats.lastGeminiKeyHeader = req.headers['x-gemini-apikey'] || null;
+      if (stats.marketsDown) return json(res, 503, { reason: 'unavailable' });
+      if (url.pathname.endsWith('/categories')) {
+        stats.categories++;
+        return json(res, 200, { categories: ['Sports', 'Crypto', 'Economics'] });
       }
-      stats.gemini++;
-      await readBody(req);
+      stats.markets++;
+      const c = (label, bestBid, bestAsk, lastTradePrice) => ({ label, prices: { bestBid, bestAsk, lastTradePrice } });
       return json(res, 200, {
-        candidates: [{ content: { parts: [{ text: JSON.stringify({
-          sentimentMultiplier: 0.88, discountProbability: 0.45, priceDrift: -0.09, rationale: 'Mock Gemini: sale season approaching.'
-        }) }] } }]
+        data: [
+          { ticker: 'FED261030', title: 'Fed decision in October?', expiryDate: '2099-10-30T04:00:00.000Z',
+            contracts: [c('Fed maintains rate', '0.82', '0.86', '0.86'), c('Hike 25bps', '0.14', '0.17', '0.14'), c('Cut >25bps', '0.01', '0.02', '0.01')] },
+          { ticker: 'RECESSION26', title: 'Recession this year?', expiryDate: '2099-02-01T00:00:00.000Z', contracts: [c('Yes', '0.03', '0.04', '0.05')] }
+        ],
+        pagination: { limit: 50, offset: 0, total: 2 }
       });
     }
 

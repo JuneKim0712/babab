@@ -188,7 +188,7 @@ export function buildRecommendation(deltaPercentMonth, deltaAmount) {
 
 /**
  * Heuristic confidence from data quality and signal strength: 40-82% for the
- * simulated model, up to 93% when a live Gemini forecast backs the projection.
+ * heuristic-only model, up to 88% when live Gemini market odds back it.
  * @returns {number} Integer percent.
  */
 export function computeConfidence(deltaPercentMonth, { hasContext = false, signalCount = 0, isSimulated = true } = {}) {
@@ -196,8 +196,8 @@ export function computeConfidence(deltaPercentMonth, { hasContext = false, signa
   if (hasContext) score += 12;
   score += Math.min(12, signalCount * 3);
   score += Math.min(16, Math.abs(deltaPercentMonth) * 1.6);
-  score += isSimulated ? 0 : 10;
-  return Math.round(clamp(score, 40, isSimulated ? 82 : 93));
+  score += isSimulated ? 0 : 5;
+  return Math.round(clamp(score, 40, isSimulated ? 82 : 88));
 }
 
 /** Format a number as US dollars. */
