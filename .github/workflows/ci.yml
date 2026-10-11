@@ -22,3 +22,30 @@ jobs:
       - name: Zip builds
         working-directory: amazon-price-oracle
         run: npm run pack -- /tmp/PriceOracle.zip && unzip -t /tmp/PriceOracle.zip
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: amazon-price-oracle
+        run: npm ci
+      - name: Install Chrome for Testing (branded Chrome 137+ ignores --load-extension)
+        working-directory: amazon-price-oracle
+        run: |
+          out=$(npx --yes @puppeteer/browsers install chrome@stable --path "$RUNNER_TEMP/chrome")
+          echo "$out"
+          echo "CHROME_PATH=$(echo "$out" | tail -n 1 | cut -d' ' -f2-)" >> "$GITHUB_ENV"
+      - name: End-to-end (mock Amazon, context.dev and Gemini)
+        working-directory: amazon-price-oracle
+        run: npm run e2e
+      - name: End-to-end against the shipped zip
+        working-directory: amazon-price-oracle
+        run: |
+          rm -rf "$RUNNER_TEMP/zip" && mkdir "$RUNNER_TEMP/zip"
+          unzip -q ../PriceOracle.zip -d "$RUNNER_TEMP/zip"
+          EXT_DIR="$RUNNER_TEMP/zip" SHOT_DIR="$RUNNER_TEMP/shots" npm run e2e

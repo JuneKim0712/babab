@@ -158,9 +158,11 @@ Key properties:
 
 | File | Role |
 | --- | --- |
-| `package.json` | Scripts: `test` (unit), `e2e`, `pack`, `icons`, `demo`. Only dev dependency: `puppeteer-core`. |
+| `package.json` | Scripts: `test` (unit), `e2e`, `pack`, `icons`, `demo`. Dev dependencies: `puppeteer-core` (e2e) and `jsdom` (parser tests). |
 | `scripts/pack.mjs` | Builds `../PriceOracle.zip` (manifest, icons, src only) with a dependency-free, deterministic zip writer. |
 | `scripts/generate-icons.js` | Generates the PNG icons with a zero-dependency rasteriser. |
+| `tests/parser.test.mjs` | DOM tests (jsdom) for `amazon-parser.js` using the mock pages as fixtures. |
+| `tests/widget.test.mjs` | Pure rendering tests for `widget-template.js`: escaping, tiers, chip states. |
 | `tests/package.test.mjs` | Guard tests: version sync, manifest file references, content-script order and classic-script rule, no inline scripts, committed zip is current. |
 | `tests/engine.test.mjs` | Unit tests (Node `node:test`): projection formulas, tier ordering, thresholds, signal extraction, scrape-response unwrapping, macro signal, heuristic determinism and bounds, seasonal calendar. |
 | `tests/e2e.mjs` | End-to-end test in a real Chrome: loads the unpacked extension, drives a mock Amazon page with mock context.dev and mock Gemini. Run against the shipped zip with `EXT_DIR`. |

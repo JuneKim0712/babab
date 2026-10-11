@@ -5,6 +5,18 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.2.1 - Parser hardening and CI
+
+- `parseProduct(doc, loc)` now accepts the location, like `getAsin` already did, so the product parser no
+  longer depends on the live `window.location` (found while writing the new tests).
+- New DOM-based parser tests (jsdom, reusing the mock pages as fixtures): price formats and ranges,
+  search-page detection, product and search-card parsing, malformed or zero-price cards, strike-through price
+  rules, and category precedence (dropdown, URL parameter, sub-nav).
+- New widget tests: pin position is monotonic and clamped, five tiers render, every dynamic string is
+  HTML-escaped (card and chip), all context chip states, chip states, and when "Deep analysis" is offered.
+- CI now also runs the browser end-to-end suite, once from source and once against the committed
+  `PriceOracle.zip`. 39 unit tests in total.
+
 ## 1.2.0 - Controls and accessibility
 
 - Options page has two switches, **Product pages** and **Search results**. They save immediately and apply live

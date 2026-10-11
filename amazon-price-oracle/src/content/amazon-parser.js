@@ -129,11 +129,12 @@
   /**
    * Gather everything the service worker needs.
    * @param {Document} [doc]
+   * @param {Location} [loc]
    * @returns {{asin: string, price: number, listPrice: number|null, title: string, category: string, rating: number|null, url: string}|null}
    *          null when this is not a product page or no price is available yet.
    */
-  function parseProduct(doc = document) {
-    const asin = getAsin(doc);
+  function parseProduct(doc = document, loc = location) {
+    const asin = getAsin(doc, loc);
     const price = getPrice(doc);
     if (!asin || !price) return null;
     const listPrice = getListPrice(doc);

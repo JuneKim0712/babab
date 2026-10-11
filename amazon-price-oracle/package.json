@@ -1,6 +1,6 @@
 {
   "name": "amazon-price-oracle",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "PriceOracle Chrome extension (Manifest V3). No runtime dependencies.",
   "scripts": {
@@ -12,6 +12,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "jsdom": "^26.1.0",
     "puppeteer-core": "^25.13.0"
   }
 }
