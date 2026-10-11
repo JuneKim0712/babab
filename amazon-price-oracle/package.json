@@ -1,6 +1,6 @@
 {
   "name": "amazon-price-oracle",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "description": "PriceOracle Chrome extension (Manifest V3). No runtime dependencies.",
   "scripts": {
@@ -8,10 +8,14 @@
     "icons": "node scripts/generate-icons.js",
     "demo": "node test-page/serve.mjs",
     "e2e": "node tests/e2e.mjs",
-    "pack": "node scripts/pack.mjs"
+    "pack": "node scripts/pack.mjs",
+    "lint": "eslint ."
   },
   "license": "MIT",
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^15.15.0",
     "jsdom": "^26.1.0",
     "puppeteer-core": "^25.13.0"
   }

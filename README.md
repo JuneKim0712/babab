@@ -160,7 +160,7 @@ Key properties:
 
 | File | Role |
 | --- | --- |
-| `package.json` | Scripts: `test` (unit), `e2e`, `pack`, `icons`, `demo`. Dev dependencies: `puppeteer-core` (e2e) and `jsdom` (parser tests). |
+| `package.json` | Scripts: `lint` (ESLint), `test` (unit), `e2e`, `pack`, `icons`, `demo`. Dev dependencies: `puppeteer-core` (e2e), `jsdom` (parser tests) and `eslint` (lint). |
 | `scripts/pack.mjs` | Builds `../PriceOracle.zip` (manifest, icons, src only) with a dependency-free, deterministic zip writer. |
 | `scripts/generate-icons.js` | Generates the PNG icons with a zero-dependency rasteriser. |
 | `tests/recent.test.mjs` | Unit tests for the recent list. |

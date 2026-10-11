@@ -5,6 +5,13 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.4.3 - Linting
+
+- ESLint (flat config, `npm run lint`) with separate rules for service-worker/page modules, classic content
+  scripts and Node tooling. Unused variables and undefined names now fail CI.
+- Fixed the two findings it reported (unused catch bindings in `messaging.js`).
+- CI installs dependencies with `npm ci` and lints before running the unit tests.
+
 ## 1.4.2 - Fast fallback when Gemini markets is down
 
 - After a failed Gemini markets request, the extension waits 5 minutes before trying again. During that time

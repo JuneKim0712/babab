@@ -65,7 +65,7 @@
       try {
         const stored = await chrome.storage.local.get(SETTING_KEYS[name]);
         return stored[SETTING_KEYS[name]] !== false;
-      } catch (_err) {
+      } catch {
         return true;
       }
     },
@@ -74,7 +74,7 @@
         chrome.storage.onChanged.addListener((changes, area) => {
           if (area === 'local' && SETTING_KEYS[name] in changes) callback(changes[SETTING_KEYS[name]].newValue !== false);
         });
-      } catch (_err) {
+      } catch {
         /* extension was reloaded; nothing to watch */
       }
     }

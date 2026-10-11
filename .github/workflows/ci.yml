@@ -13,6 +13,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Install dependencies
+        working-directory: amazon-price-oracle
+        run: npm ci
+      - name: Lint
+        working-directory: amazon-price-oracle
+        run: npm run lint
       - name: Unit tests
         working-directory: amazon-price-oracle
         run: npm test
