@@ -48,7 +48,7 @@
     const buybox = document.querySelector('#rightCol #buybox') || document.querySelector('#buybox');
     if (buybox) return { el: buybox, where: 'afterbegin' };
 
-    const fallback = document.querySelector('#corePrice_feature_div, #apex_desktop, #price_feature_div');
+    const fallback = document.querySelector('#corePrice_feature_div, #apex_desktop, #apex_offerDisplay_desktop, #price_feature_div');
     return fallback ? { el: fallback, where: 'afterend' } : null;
   }
 

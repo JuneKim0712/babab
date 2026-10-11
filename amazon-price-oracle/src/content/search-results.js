@@ -61,7 +61,7 @@
 
   /** Element the chip goes after: the price row of the card. */
   function findAnchor(card) {
-    const price = card.querySelector('.a-price:not(.a-text-price)');
+    const price = PO.Parser.getSearchPriceBox(card);
     if (!price) return null;
     return price.closest('[data-cy="price-recipe"]') || price.closest('.a-row') || price.parentElement;
   }

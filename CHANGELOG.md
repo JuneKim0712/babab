@@ -5,6 +5,16 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.4.1 - Parser fallbacks for newer Amazon markup
+
+- Product page: recognises the newer price containers (`#apex_offerDisplay_desktop`,
+  `#tp_price_block_total_price_ww`, `.reinventPricePriceToPayMargin`), and the card can anchor to
+  `#apex_offerDisplay_desktop` when the classic price block is missing.
+- Search cards: title falls back to the heading's `aria-label` (empty-text headings), rating falls back to an
+  `aria-label` ("4.3 out of 5 stars"), and "options from $X" secondary offers are never mistaken for the
+  product's price. Chip placement and parsing share one price-box helper (`getSearchPriceBox`).
+- Fixture-based tests for each variant (4 new, 57 unit tests in total).
+
 ## 1.4.0 - Recently analysed products
 
 - The popup lists the last products you looked at (below the most recent one): title, verdict pill and price,

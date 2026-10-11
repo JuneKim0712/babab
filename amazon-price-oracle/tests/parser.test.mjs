@@ -112,3 +112,47 @@ test('search category: dropdown beats URL parameter beats sub-nav', () => {
   ({ doc, loc } = fragment('', 'https://www.amazon.com/s?k=a'));
   assert.equal(Parser.getSearchCategory(doc, loc), '');
 });
+
+test('search card: heading aria-label is used when the heading has no text', () => {
+  const { doc } = fragment(`
+    <div data-component-type="s-search-result" data-asin="B0ABC12345">
+      <h2 aria-label="Echo Dot (5th Gen) smart speaker"><a href="#"><span></span></a></h2>
+      <span class="a-price"><span class="a-offscreen">$49.99</span></span>
+    </div>`);
+  assert.equal(Parser.parseSearchCard(Parser.getSearchCards(doc)[0]).title, 'Echo Dot (5th Gen) smart speaker');
+});
+
+test('search card: rating falls back to an aria-label', () => {
+  const { doc } = fragment(`
+    <div data-component-type="s-search-result" data-asin="B0ABC12345">
+      <span aria-label="4.3 out of 5 stars"></span>
+      <span class="a-price"><span class="a-offscreen">$9.99</span></span>
+    </div>`);
+  assert.equal(Parser.parseSearchCard(Parser.getSearchCards(doc)[0]).rating, 4.3);
+});
+
+test('search card: a secondary "options from" price is never the main price', () => {
+  const { doc } = fragment(`
+    <div data-component-type="s-search-result" data-asin="B0ABC12345">
+      <div data-cy="secondary-offer-recipe"><span class="a-price"><span class="a-offscreen">$5.00</span></span></div>
+    </div>
+    <div data-component-type="s-search-result" data-asin="B0ABC12346">
+      <div data-cy="secondary-offer-recipe"><span class="a-price"><span class="a-offscreen">$5.00</span></span></div>
+      <div data-cy="price-recipe"><span class="a-price"><span class="a-offscreen">$25.00</span></span></div>
+    </div>`);
+  const [only, both] = Parser.getSearchCards(doc);
+  assert.equal(Parser.parseSearchCard(only), null);
+  assert.equal(Parser.parseSearchCard(both).price, 25);
+  assert.equal(Parser.getSearchPriceBox(both).closest('[data-cy]').getAttribute('data-cy'), 'price-recipe');
+});
+
+test('product page: newer price containers are recognised', () => {
+  for (const html of [
+    '<div id="apex_offerDisplay_desktop"><span class="a-price"><span class="a-offscreen">$42.00</span></span></div>',
+    '<div id="tp_price_block_total_price_ww"><span class="a-offscreen">$42.00</span></div>',
+    '<div class="reinventPricePriceToPayMargin"><span class="a-offscreen">$42.00</span></div>'
+  ]) {
+    const { doc, loc } = fragment(`<input id="ASIN" value="B0CX23V258">${html}`, 'https://www.amazon.com/dp/B0CX23V258');
+    assert.equal(Parser.parseProduct(doc, loc)?.price, 42, html);
+  }
+});

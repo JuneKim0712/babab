@@ -18,6 +18,9 @@
     '#priceblock_dealprice',
     '#priceblock_saleprice',
     '#apex_desktop .a-price:not(.a-text-price) .a-offscreen',
+    '#apex_offerDisplay_desktop .a-price:not(.a-text-price) .a-offscreen',
+    '#tp_price_block_total_price_ww .a-offscreen',
+    '.reinventPricePriceToPayMargin .a-offscreen',
     '#buybox .a-price:not(.a-text-price) .a-offscreen',
     '#price_inside_buybox',
     '#newBuyBoxPrice'
@@ -154,10 +157,20 @@
   // -------------------------------------------------------------------------
 
   const SEARCH_CARD_SELECTOR = 'div[data-component-type="s-search-result"][data-asin]';
-  const SEARCH_PRICE_SELECTORS = [
-    '.a-price:not(.a-text-price) .a-offscreen',
-    '[data-cy="price-recipe"] .a-price:not(.a-text-price) .a-offscreen'
-  ];
+  /** "Options from $X" style secondary offers must not be mistaken for the product's price. */
+  const SECONDARY_OFFER = '[data-cy="secondary-offer-recipe"]';
+
+  /** The element holding a card's main price, or null. */
+  function getSearchPriceBox(card) {
+    return [...card.querySelectorAll('.a-price:not(.a-text-price)')].find((el) => !el.closest(SECONDARY_OFFER)) || null;
+  }
+
+  /** Card title: visible text, else the aria-label newer layouts put on the heading. */
+  function searchTitle(card) {
+    const heading = card.querySelector('h2') || card.querySelector('[data-cy="title-recipe"]');
+    const text = (heading?.textContent || '').trim() || (heading?.getAttribute('aria-label') || '').trim();
+    return text.replace(/\s+/g, ' ').slice(0, 300);
+  }
 
   /** Whether the URL is an Amazon search-results page (`/s?k=...`). */
   function isSearchPage(loc = location) {
@@ -189,22 +202,16 @@
     const asin = card.getAttribute('data-asin');
     if (!isAsin(asin)) return null;
 
-    let price = null;
-    for (const selector of SEARCH_PRICE_SELECTORS) {
-      const el = card.querySelector(selector);
-      price = el && parsePrice(el.textContent);
-      if (price) break;
-    }
-    if (!price) {
-      const box = card.querySelector('.a-price:not(.a-text-price)');
-      price = box ? priceFromParts(box) : null;
-    }
+    const box = getSearchPriceBox(card);
+    if (!box) return null;
+    const price = parsePrice(box.querySelector('.a-offscreen')?.textContent) ?? priceFromParts(box);
     if (!price) return null;
 
     const listText = card.querySelector('.a-price.a-text-price .a-offscreen')?.textContent;
     const listPrice = parsePrice(listText);
-    const rating = parsePrice(card.querySelector('.a-icon-alt')?.textContent?.match(/(\d(?:\.\d)?)\s*out of/i)?.[1]);
-    const title = (card.querySelector('h2')?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+    const ratingText = card.querySelector('.a-icon-alt')?.textContent || card.querySelector('[aria-label*="out of 5 stars"]')?.getAttribute('aria-label') || '';
+    const rating = parsePrice(ratingText.match(/(\d(?:\.\d)?)\s*out of/i)?.[1]);
+    const title = searchTitle(card);
 
     return {
       asin: asin.toUpperCase(),
@@ -222,6 +229,6 @@
 
   PO.Parser = {
     getAsin, getPrice, getListPrice, getCategory, getTitle, getRating, parsePrice, parseProduct,
-    isSearchPage, getSearchCategory, parseSearchCard, getSearchCards, SEARCH_CARD_SELECTOR
+    isSearchPage, getSearchCategory, parseSearchCard, getSearchCards, getSearchPriceBox, SEARCH_CARD_SELECTOR
   };
 })(globalThis);
