@@ -10,10 +10,12 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "scripting"],
   "host_permissions": [
     "https://api.context.dev/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://api.gemini.com/*",
+    "https://www.amazon.com/*",
+    "https://amazon.com/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.js",
