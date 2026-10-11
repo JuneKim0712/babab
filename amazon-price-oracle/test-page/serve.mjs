@@ -27,7 +27,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 44391);
 const DEFAULT_KEY = 'ctxt_secret_7390b0f7f788470c85aa687254599803';
 
-export const stats = { extract: 0, extractAuthOk: 0, markets: 0, categories: 0, lastGeminiKeyHeader: null, marketsDown: false, lastExtractBody: null };
+export const stats = { extract: 0, extractAuthOk: 0, markets: 0, categories: 0, lastGeminiKeyHeader: null, marketsDown: false, lastExtractBody: null, contextStatus: 0 };
 
 function ensureCert() {
   const dir = path.join(os.tmpdir(), 'price-oracle-demo-cert');
@@ -70,6 +70,7 @@ export function createServer() {
       stats.extract++;
       const body = JSON.parse((await readBody(req)) || '{}');
       stats.lastExtractBody = body;
+      if (stats.contextStatus) return json(res, stats.contextStatus, { error: 'forced failure' });
       const authOk = req.headers.authorization === `Bearer ${process.env.EXPECTED_CONTEXT_KEY || DEFAULT_KEY}`;
       if (authOk) stats.extractAuthOk++;
       else return json(res, 401, { error: 'invalid key' });

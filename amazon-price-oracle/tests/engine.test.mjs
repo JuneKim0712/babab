@@ -5,7 +5,7 @@ import {
   estimateVolatility,
   buildRecommendation
 } from '../src/background/projection-engine.js';
-import { extractSignals, fetchProductContext, saveCacheEntry, signalsFromMarkdown, unwrapScrapeResponse } from '../src/background/context-dev.js';
+import { clearContextPause, extractSignals, fetchProductContext, saveCacheEntry, signalsFromMarkdown, unwrapScrapeResponse } from '../src/background/context-dev.js';
 import {
   blendMacro,
   computeMacroSignal,
@@ -253,4 +253,50 @@ test('simultaneous cache writes keep every entry', async () => {
     Array.from({ length: 25 }, (_, i) => saveCacheEntry(`B0TEST${String(i).padStart(4, '0')}`, { fetchedAt: Date.now(), signals: { listPrice: i + 1 } }))
   );
   assert.equal(Object.keys(store.context_cache).length, 25);
+});
+
+test('a rejected key pauses context.dev for every product instead of retrying each one', async () => {
+  const store = stubChrome();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return { ok: false, status: 401, json: async () => ({}) };
+  };
+  const first = await fetchProductContext('B0PAUSE001');
+  assert.equal(first.status, 'error');
+  assert.match(first.error, /rejected the API key/);
+  assert.equal(calls, 1);
+
+  const second = await fetchProductContext('B0PAUSE002');
+  assert.equal(second.status, 'error');
+  assert.match(second.error, /paused until/);
+  assert.equal(calls, 1); // no second request
+  assert.equal(store.context_cache?.B0PAUSE001, undefined); // the outage is not remembered per product
+
+  await clearContextPause();
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ json: { success: true, data: { listPrice: 20 } }, markdown: { success: true, data: '' } }) });
+  const third = await fetchProductContext('B0PAUSE003');
+  assert.equal(third.status, 'connected');
+});
+
+test('an expired pause lets requests through again; stale cache is still served while paused', async () => {
+  const store = stubChrome();
+  store.context_cache = { B0STALE001: { fetchedAt: Date.now() - 30 * 3600e3, signals: { listPrice: 20 } } }; // expired entry
+  store.context_pause = { until: Date.now() + 60000, reason: 'context.dev quota or rate limit reached (HTTP 429)' };
+  globalThis.fetch = async () => {
+    throw new Error('must not be called while paused');
+  };
+  const paused = await fetchProductContext('B0STALE001');
+  assert.equal(paused.status, 'cached');
+  assert.deepEqual(paused.signals, { listPrice: 20 });
+  assert.match(paused.error, /paused until/);
+
+  store.context_pause.until = Date.now() - 1;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    return { ok: true, status: 200, json: async () => ({ json: { success: true, data: { listPrice: 25 } }, markdown: { success: true, data: '' } }) };
+  };
+  assert.equal((await fetchProductContext('B0STALE001')).status, 'connected');
+  assert.equal(called, true);
 });

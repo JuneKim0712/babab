@@ -5,6 +5,16 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.3.2 - Circuit breaker for context.dev
+
+- A rejected key (401/403) or exhausted quota (402/429) now pauses context.dev calls for 30 minutes for
+  *all* products, instead of failing and retrying once per product. Cards keep working from page data and
+  cached results; the chip tooltip explains "paused until HH:MM".
+- The outage is not stored as a per-product error, so nothing stays stuck after the problem is fixed.
+- Saving settings or a successful **Test Connection** resumes calls immediately.
+- Unit tests (pause, no per-product error, stale cache served while paused, expiry) and an end-to-end test
+  with a forced 401 (second product never reaches the API; Test Connection restores service).
+
 ## 1.3.1 - Performance and accessibility
 
 - Price history no longer rewrites its storage blob when a product is revisited with an unchanged price. A

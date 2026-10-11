@@ -31,6 +31,7 @@ export const STORAGE_KEYS = Object.freeze({
   SHOW_PRODUCT_CARD: 'show_product_card',
   SHOW_SEARCH_CHIPS: 'show_search_chips',
   PRICE_HISTORY: 'price_history',
+  CONTEXT_PAUSE: 'context_pause',
   LAST_ANALYSIS: 'last_analysis',
   ANALYSIS_COUNT: 'analysis_count'
 });
@@ -39,6 +40,8 @@ export const STORAGE_KEYS = Object.freeze({
 export const CONTEXT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 /** Failed lookups are remembered briefly so a flaky API is not hammered. */
 export const CONTEXT_ERROR_TTL_MS = 15 * 60 * 1000;
+/** After a key or quota failure, context.dev is not called again for this long. */
+export const CONTEXT_PAUSE_MS = 30 * 60 * 1000;
 /** Macro odds from Gemini markets move slowly; refresh at most every 3 hours. */
 export const MACRO_CACHE_TTL_MS = 3 * 60 * 60 * 1000;
 /** If Gemini markets is unreachable, reuse a cached reading up to this old. */

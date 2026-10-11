@@ -18,6 +18,7 @@ import {
   CONTEXT_DEV_AUTH_CHECK_URL,
   CONTEXT_DEV_ENDPOINT,
   CONTEXT_ERROR_TTL_MS,
+  CONTEXT_PAUSE_MS,
   DEFAULT_CONTEXT_DEV_KEY,
   STORAGE_KEYS
 } from '../shared/constants.js';
@@ -101,6 +102,14 @@ export async function fetchProductContext(asin, { forceRefresh = false, cacheOnl
 
   if (cacheOnly) return { status: 'skipped', fromCache: false, fetchedAt: null, signals: {} };
 
+  const pause = await getPause();
+  if (pause) {
+    // Not cached as a per-ASIN failure: the whole service is paused, and the pause expires on its own.
+    const message = `${pause.reason} (paused until ${new Date(pause.until).toLocaleTimeString()}; fix the key in Settings to resume now)`;
+    if (entry && !entry.error) return { status: 'cached', fromCache: true, fetchedAt: entry.fetchedAt, signals: entry.signals, error: message };
+    return { status: 'error', fromCache: false, fetchedAt: null, signals: {}, error: message };
+  }
+
   try {
     const { key } = await getContextDevKey();
     const payload = await requestExtract(`https://www.amazon.com/dp/${asin}`, key);
@@ -111,6 +120,11 @@ export async function fetchProductContext(asin, { forceRefresh = false, cacheOnl
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const fetchedAt = Date.now();
+    if (err && err.pause) {
+      await setPause(message);
+      if (entry && !entry.error) return { status: 'cached', fromCache: true, fetchedAt: entry.fetchedAt, signals: entry.signals, error: message };
+      return { status: 'error', fromCache: false, fetchedAt, signals: {}, error: message };
+    }
     // Keep a stale-but-valid cache entry rather than overwriting it with an error.
     if (entry && !entry.error) {
       return { status: 'cached', fromCache: true, fetchedAt: entry.fetchedAt, signals: entry.signals, error: message };
@@ -118,6 +132,21 @@ export async function fetchProductContext(asin, { forceRefresh = false, cacheOnl
     await saveCacheEntry(asin, { fetchedAt, signals: {}, error: message });
     return { status: 'error', fromCache: false, fetchedAt, signals: {}, error: message };
   }
+}
+
+/** Circuit breaker: a rejected key or exhausted quota affects every product, so stop calling for a while. */
+async function getPause() {
+  const pause = (await chrome.storage.local.get(STORAGE_KEYS.CONTEXT_PAUSE))[STORAGE_KEYS.CONTEXT_PAUSE];
+  return pause && pause.until > Date.now() ? pause : null;
+}
+
+async function setPause(reason) {
+  await chrome.storage.local.set({ [STORAGE_KEYS.CONTEXT_PAUSE]: { until: Date.now() + CONTEXT_PAUSE_MS, reason } });
+}
+
+/** Resume calling context.dev now (key changed or a connection test succeeded). */
+export async function clearContextPause() {
+  await chrome.storage.local.remove(STORAGE_KEYS.CONTEXT_PAUSE);
 }
 
 /**
@@ -145,10 +174,10 @@ async function requestExtract(url, apiKey) {
       signal: controller.signal
     });
     if (res.status === 401 || res.status === 403) {
-      throw new Error(`context.dev rejected the API key (HTTP ${res.status})`);
+      throw Object.assign(new Error(`context.dev rejected the API key (HTTP ${res.status})`), { pause: true });
     }
     if (res.status === 402 || res.status === 429) {
-      throw new Error(`context.dev quota or rate limit reached (HTTP ${res.status})`);
+      throw Object.assign(new Error(`context.dev quota or rate limit reached (HTTP ${res.status})`), { pause: true });
     }
     if (!res.ok) {
       throw new Error(`context.dev request failed (HTTP ${res.status})`);

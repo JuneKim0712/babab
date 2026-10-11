@@ -372,6 +372,38 @@ try {
     stats.marketsDown = false;
   });
 
+  await step('a rejected context.dev key pauses calls for all products until Test Connection succeeds', async () => {
+    const waitPin = (text) =>
+      page.waitForFunction(
+        (t) => document.getElementById('price-oracle-host')?.shadowRoot?.querySelector('.po-pin-label')?.textContent === t,
+        { timeout: 15000 },
+        text
+      );
+    await opts.bringToFront();
+    await opts.evaluate(() => chrome.storage.local.remove('context_cache'));
+    stats.contextStatus = 401;
+    const before = stats.extract;
+    await page.bringToFront();
+    await page.goto(PRODUCT, { waitUntil: 'load' });
+    await waitReady(page);
+    assert.match(await shadow(page, (root) => root.querySelector('.po-chip')?.textContent.trim()), /context\.dev: Offline/);
+    await page.click('button[data-asin="B0CX23V259"]');
+    await waitPin('Current: $239.00');
+    assert.equal(stats.extract, before + 1); // the second product never reached the API
+    assert.match(await shadow(page, (root) => root.querySelector('.po-chip')?.getAttribute('title')), /paused until/);
+
+    stats.contextStatus = 0;
+    await opts.bringToFront();
+    await opts.click('#test');
+    await opts.waitForFunction(() => /Connected/.test(document.getElementById('res-context').textContent), { timeout: 20000 });
+    assert.deepEqual(await opts.evaluate(() => chrome.storage.local.get('context_pause')), {});
+    await page.bringToFront();
+    await page.click('button[data-asin="B0CX23V260"]');
+    await waitPin('Current: $129.50');
+    assert.match(await shadow(page, (root) => root.querySelector('.po-chip')?.textContent.trim()), /context\.dev: Connected/);
+    assert.equal(stats.extract, before + 2);
+  });
+
   const popup = await browser.newPage();
   await popup.setViewport({ width: 360, height: 640 });
   await popup.goto(`chrome-extension://${extId}/src/popup/popup.html`);
@@ -380,7 +412,7 @@ try {
     await popup.waitForFunction(() => !document.getElementById('last-body').hidden, { timeout: 10000 });
     assert.ok(Number(await popup.$eval('#stat-count', (el) => el.textContent)) >= 3);
     assert.match(await popup.$eval('#ctx-status', (el) => el.textContent), /Default key active/);
-    assert.match(await popup.$eval('#gem-status', (el) => el.textContent), /Offline/); // last analysis ran while markets were down
+    assert.match(await popup.$eval('#gem-status', (el) => el.textContent), /Live/);
     assert.equal(await popup.$('#add-gemini'), null);
     assert.equal(await popup.$('#modal'), null);
     await popup.screenshot({ path: path.join(shots, '05-popup.png') });

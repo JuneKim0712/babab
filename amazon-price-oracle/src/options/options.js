@@ -39,7 +39,7 @@ async function save(event) {
     await chrome.storage.local.set({ [STORAGE_KEYS.CONTEXT_KEY]: contextKey });
   }
 
-  await chrome.storage.local.remove(STORAGE_KEYS.MACRO_CACHE);
+  await chrome.storage.local.remove([STORAGE_KEYS.MACRO_CACHE, STORAGE_KEYS.CONTEXT_PAUSE]);
 
   banner('Settings saved.', 'ok');
 }

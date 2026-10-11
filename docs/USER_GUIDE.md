@@ -124,7 +124,7 @@ Open `chrome://extensions`, find PriceOracle, click **Remove**, and confirm. You
 | **"Manifest file is missing or unreadable"** | You selected the wrong folder. Pick the one that directly contains `manifest.json`, not its parent. |
 | **No card appears** | Make sure it is an amazon.com product page (the address contains `/dp/`) or a search results page (`/s?k=...`), and that the item shows a price. Search results without a price ("See options") get no chip. Then reload the extension (`chrome://extensions`, reload arrow) and reload the page. |
 | **The card says "Couldn't build a projection"** | Click **Retry**. If it keeps failing, open Settings and run **Test Connection**. |
-| **context.dev chip is amber** | The product data service returned an error for this item. The card still works from page data. Try again later or check your key in Settings. |
+| **context.dev chip is amber** | The product data service returned an error for this item. The card still works from page data. Hover the chip for the reason. If it says "paused", the key was rejected or its quota is used up: PriceOracle stops calling for 30 minutes. Open Settings and click **Test Connection** (or **Save**) to resume right away. |
 | **Gemini chip is amber** | The market-odds service was unreachable. The card falls back to its built-in model. |
 | **Chrome asks to disable developer-mode extensions on startup** | Choose to keep PriceOracle. This is a Chrome safety prompt for any extension installed outside the Web Store. |
 | **The extension vanished after I moved or deleted the folder** | Chrome reads from the folder. Put the folder somewhere permanent and **Load unpacked** it again. |

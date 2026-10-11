@@ -15,6 +15,7 @@
 import { MSG, STORAGE_KEYS, DEFAULT_CONTEXT_DEV_KEY } from '../shared/constants.js';
 import {
   clearContextCache,
+  clearContextPause,
   countCachedProducts,
   fetchProductContext,
   getContextDevKey,
@@ -237,5 +238,6 @@ async function getStatus() {
 async function testConnections(keys) {
   const contextKey = (keys.contextDev || '').trim() || (await getContextDevKey()).key || DEFAULT_CONTEXT_DEV_KEY;
   const [contextDev, gemini] = await Promise.all([testContextDevConnection(contextKey), testGeminiConnection()]);
+  if (contextDev.ok) await clearContextPause();
   return { contextDev, gemini };
 }
