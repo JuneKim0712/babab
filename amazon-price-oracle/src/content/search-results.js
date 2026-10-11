@@ -25,7 +25,7 @@
   root.__priceOracleSearchLoaded = true;
 
   /** Mirrors MSG in src/shared/constants.js (content scripts cannot import modules). */
-  const MSG = { ANALYZE_PRODUCT: 'PO_ANALYZE_PRODUCT' };
+  const MSG = { ANALYZE_PRODUCT: 'PO_ANALYZE_PRODUCT', ALERT_LIST: 'PO_ALERT_LIST' };
   const HOST_ATTR = 'data-price-oracle-chip';
   const MAX_CONCURRENT = 4;
   const DEBOUNCE_MS = 300;
@@ -40,6 +40,8 @@
   let mutationObserver = null;
   let observedRoot = null;
   let enabled = false;
+  /** The user's local price alerts by ASIN; shown as a bell on the chips. */
+  let alertsByAsin = new Map();
 
   /**
    * @typedef {Object} CardState
@@ -67,7 +69,7 @@
   }
 
   function paint(state) {
-    state.shadow.innerHTML = PO.Widget.renderChip(state.view);
+    state.shadow.innerHTML = PO.Widget.renderChip({ ...state.view, alert: alertsByAsin.get(state.product.asin) });
   }
 
   function place(card, state) {
@@ -180,6 +182,31 @@
   // Discovery
   // -------------------------------------------------------------------------
 
+  /** One request per page, refreshed when alerts change. Silent on failure: the chips just have no bell. */
+  async function loadAlerts() {
+    try {
+      const overview = await sendMessage({ type: MSG.ALERT_LIST });
+      alertsByAsin = new Map(overview.alerts.map((a) => [a.asin, a]));
+    } catch {
+      return;
+    }
+    if (!enabled) return;
+    for (const card of PO.Parser.getSearchCards(document)) {
+      const state = cards.get(card);
+      if (state) paint(state);
+    }
+  }
+
+  function watchAlerts() {
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && 'price_alerts' in changes && enabled) loadAlerts();
+      });
+    } catch {
+      /* extension was reloaded; nothing to watch */
+    }
+  }
+
   function ensureIntersection() {
     if (intersection || typeof IntersectionObserver === 'undefined') return;
     intersection = new IntersectionObserver(
@@ -270,6 +297,7 @@
     ensureIntersection();
     attachObserver();
     scan();
+    loadAlerts();
   }
 
   /** Remove every chip and stop watching the page (the "show chips" switch was turned off). */
@@ -289,6 +317,7 @@
   async function init() {
     window.addEventListener('popstate', scheduleScan);
     window.addEventListener('pageshow', scheduleScan);
+    watchAlerts();
     PO.settings.watch('searchChips', (on) => (on ? enable() : disable()));
     if (await PO.settings.get('searchChips')) enable();
   }

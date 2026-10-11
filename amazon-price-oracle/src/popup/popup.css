@@ -45,3 +45,14 @@ body { margin: 0; width: 340px; font-size: 13px; line-height: 1.45; }
 .recent a:hover, .recent a:focus-visible { background: var(--po-wash); }
 .recent-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pill.small { font-size: 10.5px; padding: 1px 6px; }
+
+.alerts { list-style: none; margin: 0; padding: 0; }
+.alerts li { padding: 8px 0; border-top: 1px solid var(--po-rule); display: grid; gap: 4px; }
+.alerts li:first-child { border-top: 0; padding-top: 0; }
+.alerts a { color: var(--po-ink); text-decoration: none; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alerts a:hover { color: var(--po-teal-deep); text-decoration: underline; }
+.alert-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--po-graphite); }
+.pill.ALERT_ON { background: var(--po-fair-tint); color: var(--po-fair); }
+.pill.ALERT_PAUSED { background: var(--po-caution-tint); color: var(--po-caution); }
+.pill.ALERT_SENT { background: var(--po-buy-tint); color: var(--po-buy); }
+.btn.small { padding: 2px 8px; font-size: 12px; }

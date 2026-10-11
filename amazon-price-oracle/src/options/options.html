@@ -29,17 +29,24 @@
       </label>
     </section>
 
-    <section class="panel" aria-labelledby="account-title">
-      <h2 id="account-title">Google account and price alerts</h2>
-      <p class="help">Sign in with Google to set a price alert on any product page. Alerts are saved on the PriceOracle website under your account (so they also appear there) and emailed to your Google address. Only an explicit click creates an alert.</p>
-      <div class="field">
-        <button type="button" id="account-signin" class="btn primary">Sign in with Google</button>
-        <button type="button" id="account-signout" class="btn ghost" hidden>Sign out</button>
-      </div>
-      <p id="account-state" class="state" role="status"></p>
-    </section>
+    <form id="form" autocomplete="off" novalidate>
+      <section class="panel" aria-labelledby="alerts-title">
+        <h2 id="alerts-title">Price alerts</h2>
+        <p class="help">Alerts are saved in this browser, not on a server, and there is nothing to sign in to. When an item reaches your target PriceOracle shows a Chrome notification and puts a count on its toolbar icon. They also appear on the <a href="https://xylm-306e6.web.app/alerts/" target="_blank" rel="noopener noreferrer">PriceOracle alerts page</a> next to the alerts you already have there. Set an alert from the card on any product page.</p>
+        <label for="alert-email">Your email (optional)</label>
+        <div class="field">
+          <input id="alert-email" type="email" spellcheck="false" autocomplete="email" placeholder="you@example.com" />
+        </div>
+        <p class="help">Kept on this device. It is listed on your alerts, and the notification gets an "Email me this" button that opens a message to this address in your mail app. PriceOracle does not send email itself.</p>
+        <label class="switch" for="alert-background">
+          <input id="alert-background" type="checkbox" />
+          <span><strong>Check prices in the background</strong> Every hour, look up alerts that were not checked in the last 4 hours (at most 5 per run, one context.dev credit each). Off: alerts only fire while you browse Amazon.</span>
+        </label>
+        <div class="field">
+          <button type="button" id="test-notification" class="btn ghost">Send a test notification</button>
+        </div>
+      </section>
 
-    <form id="form" autocomplete="off">
       <section class="panel">
         <h2>context.dev API key</h2>
         <p class="help">Used to extract pricing signals from the Amazon product page. A working default key is pre-filled; replace it with your own any time. Responses are cached for 24 hours per ASIN to save credits.</p>

@@ -71,15 +71,65 @@ function renderLast(last) {
   $('last-when').textContent = `Analyzed ${timeAgo(last.at)}`;
 }
 
-function renderAccount(account) {
-  if (account.signedIn) {
-    setBadge($('account-status'), true, 'Signed in');
-    const count = account.activeAlerts === null ? '' : ` · ${account.activeAlerts} active alert${account.activeAlerts === 1 ? '' : 's'}`;
-    $('account-hint').textContent = `${account.email || 'Your Google account'}${count}`;
-  } else {
-    setBadge($('account-status'), false, account.expired ? 'Sign in again' : 'Signed out');
-    $('account-hint').textContent = 'Open Settings to sign in with Google and set price alerts from product pages.';
+const ALERT_PILL = { active: ['ALERT_ON', 'Alert on'], paused: ['ALERT_PAUSED', 'Paused'], triggered: ['ALERT_SENT', 'Target reached'] };
+const MAX_ALERTS_SHOWN = 6;
+
+/** Titles come from Amazon pages, so everything is set with textContent. */
+function renderAlerts(overview) {
+  const alerts = overview?.alerts || [];
+  $('alerts-card').hidden = alerts.length === 0;
+  const ul = $('alerts-list');
+  ul.replaceChildren();
+  for (const alert of alerts.slice(0, MAX_ALERTS_SHOWN)) {
+    const li = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = `https://www.amazon.com/dp/${encodeURIComponent(alert.asin)}`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = alert.title || `ASIN ${alert.asin}`;
+
+    const meta = document.createElement('div');
+    meta.className = 'alert-meta';
+    const [cls, label] = ALERT_PILL[alert.status];
+    const pill = document.createElement('span');
+    pill.className = `pill small ${cls}`;
+    pill.textContent = label;
+    const goal = document.createElement('span');
+    goal.textContent = alert.status === 'triggered' ? `hit ${usd(alert.triggeredPrice || alert.targetPrice)}, target ${usd(alert.targetPrice)}` : `at or below ${usd(alert.targetPrice)}`;
+    meta.append(pill, goal);
+
+    if (alert.status === 'triggered') {
+      const rearm = document.createElement('button');
+      rearm.type = 'button';
+      rearm.className = 'btn small';
+      rearm.textContent = 'Re-arm';
+      rearm.addEventListener('click', async () => {
+        rearm.disabled = true;
+        try {
+          await request({ type: MSG.ALERT_UPDATE, payload: { alertId: alert.id, status: 'active' } });
+        } catch (err) {
+          goal.textContent = err.message;
+        }
+        await refresh();
+      });
+      meta.append(rearm);
+    }
+    li.append(link, meta);
+    ul.append(li);
   }
+  const extra = alerts.length - MAX_ALERTS_SHOWN;
+  $('alerts-more').hidden = extra <= 0;
+  $('alerts-more').textContent = extra > 0 ? `and ${extra} more on the alerts page` : '';
+}
+
+function renderAlertsStatus(overview) {
+  const alerts = overview?.alerts || [];
+  const active = alerts.filter((a) => a.status === 'active').length;
+  const reached = alerts.filter((a) => a.status === 'triggered').length;
+  setBadge($('alerts-status'), true, reached ? `${reached} reached` : active ? `${active} watching` : 'None yet');
+  $('alerts-hint').textContent = alerts.length
+    ? 'Alerts are stored in this browser. Chrome notifies you when one reaches its target.'
+    : 'Open a product page and use "Set alert" in the PriceOracle card. Alerts are stored in this browser.';
 }
 
 async function refresh() {
@@ -96,7 +146,9 @@ async function refresh() {
         ? 'Gemini markets was unreachable on the last check: using the heuristic model only.'
         : 'Live Fed and recession odds from Gemini prediction markets feed every projection. No key required.';
     renderLast(status.lastAnalysis);
-    renderAccount(await request({ type: MSG.ACCOUNT_STATUS, withAlertCount: true }));
+    const overview = await request({ type: MSG.ALERT_LIST });
+    renderAlertsStatus(overview);
+    renderAlerts(overview);
     renderRecent(status.recent);
   } catch (err) {
     $('gem-hint').textContent = `Could not load status: ${err.message}`;

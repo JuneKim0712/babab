@@ -20,7 +20,6 @@
   const MSG = {
     ANALYZE_PRODUCT: 'PO_ANALYZE_PRODUCT',
     OPEN_OPTIONS: 'PO_OPEN_OPTIONS',
-    ACCOUNT_SIGN_IN: 'PO_ACCOUNT_SIGN_IN',
     ALERT_STATE: 'PO_ALERT_STATE',
     ALERT_CREATE: 'PO_ALERT_CREATE',
     ALERT_UPDATE: 'PO_ALERT_UPDATE',
@@ -96,8 +95,7 @@
     if (!target) return;
     const action = target.getAttribute('data-action');
     if (action === 'retry' && lastParsed) analyze(lastParsed, true);
-    else if (action === 'alert-account') sendMessage({ type: MSG.OPEN_OPTIONS }).catch(() => {});
-    else if (action === 'alert-signin') signIn();
+    else if (action === 'alert-settings') sendMessage({ type: MSG.OPEN_OPTIONS }).catch(() => {});
     else if (action === 'alert-retry') loadAlert();
     else if (action === 'alert-save') saveAlert();
     else if (action === 'alert-toggle') toggleAlert(target.getAttribute('data-next-status'));
@@ -112,31 +110,31 @@
   }
 
   // -------------------------------------------------------------------------
-  // Price alerts (stored on the PriceOracle website; the worker does the talking)
+  // Price alerts (stored on this device by the service worker)
   // -------------------------------------------------------------------------
 
   const readTarget = () => shadow?.querySelector('[data-field="alert-target"]')?.value ?? '';
-  const isSignedOutError = (err) => /sign-in expired/i.test(String(err && err.message));
 
   function setAlertView(patch) {
     alertView = { ...alertView, ...patch };
     if (cardState.status === 'ready') paint(cardState);
   }
 
-  async function loadAlert() {
+  /** Read this item's alert. `quiet` keeps what is on screen while the answer is fetched (live updates). */
+  async function loadAlert(quiet = false) {
     if (!lastParsed || cardState.status !== 'ready') return;
     const { asin } = lastParsed;
     const seq = requestSeq;
     const suggested = PO.Widget.suggestTarget(cardState.data.projection.currentPrice, cardState.data.projection.tiers.low);
-    alertView = { phase: 'loading', suggested };
-    paint(cardState);
+    if (!quiet) {
+      alertView = { phase: 'loading', suggested };
+      paint(cardState);
+    }
     try {
       const res = await sendMessage({ type: MSG.ALERT_STATE, asin });
       if (seq !== requestSeq) return;
-      alertView =
-        res.state === 'ready'
-          ? { phase: 'ready', alert: res.alert, email: res.email, suggested }
-          : { phase: res.state, error: res.error, expired: res.expired, suggested };
+      alertView = { ...(quiet ? alertView : null), phase: 'ready', alert: res.alert, email: res.email, suggested };
+      if (quiet && shadow?.activeElement?.matches('[data-field="alert-target"]')) return; // do not wipe what is being typed
     } catch (err) {
       if (seq !== requestSeq || /context invalidated/i.test(String(err && err.message))) return;
       alertView = { phase: 'error', error: err && err.message, suggested };
@@ -144,7 +142,7 @@
     paint(cardState);
   }
 
-  /** Run `work` with the alert section disabled; map "signed out" errors back to the sign-in prompt. */
+  /** Run `work` with the alert section disabled, then apply its result. */
   async function withBusy(patch, work, apply) {
     if (!lastParsed || alertView?.busy) return;
     const seq = requestSeq;
@@ -155,23 +153,12 @@
       apply(result);
     } catch (err) {
       if (seq !== requestSeq) return;
-      if (isSignedOutError(err)) {
-        loadAlert();
+      if (/no longer exists/i.test(String(err && err.message))) {
+        await loadAlert(); // the alert was deleted elsewhere (popup or website page): show what is really there
+        setAlertView({ error: err.message });
         return;
       }
-      setAlertView({ busy: false, creating: false, error: err && err.message });
-    }
-  }
-
-  async function signIn() {
-    if (!lastParsed || alertView?.busy) return;
-    const seq = requestSeq;
-    setAlertView({ busy: true, error: '' });
-    try {
-      await sendMessage({ type: MSG.ACCOUNT_SIGN_IN });
-      if (seq === requestSeq) await loadAlert();
-    } catch (err) {
-      if (seq === requestSeq) setAlertView({ busy: false, error: err && err.message });
+      setAlertView({ busy: false, error: err && err.message });
     }
   }
 
@@ -180,14 +167,14 @@
     if (alertView?.phase !== 'ready') return;
     const existing = alertView.alert;
     const typed = readTarget();
-    const base = { asin: lastParsed.asin, currentPrice: lastParsed.price, targetPrice: typed };
+    const base = { asin: lastParsed.asin, title: lastParsed.title, currentPrice: lastParsed.price, targetPrice: typed };
     await withBusy(
-      { draft: typed, creating: !existing },
+      { draft: typed },
       () =>
         existing
           ? sendMessage({ type: MSG.ALERT_UPDATE, payload: { ...base, alertId: existing.id } })
           : sendMessage({ type: MSG.ALERT_CREATE, payload: base }),
-      (alert) => setAlertView({ busy: false, creating: false, alert, draft: undefined })
+      (alert) => setAlertView({ busy: false, alert, draft: undefined })
     );
   }
 
@@ -198,7 +185,7 @@
     const typed = readTarget();
     await withBusy(
       { draft: typed },
-      () => sendMessage({ type: MSG.ALERT_UPDATE, payload: { asin: lastParsed.asin, alertId: id, status: nextStatus } }),
+      () => sendMessage({ type: MSG.ALERT_UPDATE, payload: { alertId: id, status: nextStatus } }),
       (alert) => setAlertView({ busy: false, alert, draft: undefined })
     );
   }
@@ -213,11 +200,12 @@
     );
   }
 
-  /** Signing in or out (here, in Settings or the popup) updates open product pages. */
-  function watchAccount() {
+  /** An alert changed elsewhere (another tab, the popup, the website page, a fired alert): update the card. */
+  function watchAlerts() {
     try {
       chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === 'local' && 'account_marker' in changes && enabled && !alertView?.busy) loadAlert();
+        if (area !== 'local' || !enabled || alertView?.busy) return;
+        if ('price_alerts' in changes || 'alert_email' in changes) loadAlert(true);
       });
     } catch {
       /* extension was reloaded; nothing to watch */
@@ -330,7 +318,7 @@
     if (!isProductPage()) return;
     window.addEventListener('popstate', scheduleRefresh);
     window.addEventListener('pageshow', scheduleRefresh);
-    watchAccount();
+    watchAlerts();
     PO.settings.watch('productCard', (on) => (on ? enable() : disable()));
     if (await PO.settings.get('productCard')) enable();
   }

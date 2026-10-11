@@ -1,108 +1,59 @@
 /**
- * Pure helpers for Google sign-in, Firebase tokens and the website's alert API
- * (no chrome.* and no fetch, so they are unit-tested). Wire format: docs/ALERTS_INTEGRATION.md.
+ * Pure helpers for the local price alerts (no chrome.* and no fetch, so they are unit-tested).
+ *
+ * An alert is a plain object, one per product (ASIN), stored in chrome.storage.local:
+ *   { id, asin, title, targetPrice, status: 'active'|'paused'|'triggered', priceAtCreation, lastPrice,
+ *     lastCheckedAt, createdAt, triggeredAt, triggeredPrice }
+ * Every function returns new objects; callers persist the result.
  */
-import { GOOGLE_AUTH_URL } from '../shared/constants.js';
 
-const b64urlToString = (value) => {
-  const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
-  const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
+export const MAX_ALERTS = 200;
+const MAX_TITLE = 200;
+
+export const alertId = (asin) => `po-${String(asin).toUpperCase()}`;
+
+const money = (v) => {
+  const n = Number(v);
+  return v === null || v === undefined || v === '' || !Number.isFinite(n) || n <= 0 ? null : Math.round(n * 100) / 100;
 };
-
-/** Read the claims of a JWT without verifying it (Firebase verifies the signature server-side). */
-export function decodeJwtPayload(token) {
-  const parts = String(token || '').split('.');
-  if (parts.length !== 3) throw new Error('Google returned a malformed ID token.');
-  try {
-    return JSON.parse(b64urlToString(parts[1]));
-  } catch {
-    throw new Error('Google returned a malformed ID token.');
-  }
-}
-
-/** URL of Google's consent screen for an ID token (OpenID Connect implicit flow). */
-export function buildGoogleAuthUrl({ clientId, redirectUri, state, nonce, loginHint }) {
-  const url = new URL(GOOGLE_AUTH_URL);
-  url.searchParams.set('client_id', clientId);
-  url.searchParams.set('response_type', 'id_token');
-  url.searchParams.set('redirect_uri', redirectUri);
-  url.searchParams.set('scope', 'openid email profile');
-  url.searchParams.set('state', state);
-  url.searchParams.set('nonce', nonce);
-  url.searchParams.set('prompt', 'select_account');
-  if (loginHint) url.searchParams.set('login_hint', loginHint);
-  return url.toString();
-}
+const time = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
 
 /**
- * Pull the Google ID token out of the redirect and check that it answers *our* request.
- * @returns {string} the Google ID token
+ * Defensive read of one stored alert.
+ * @returns {object|null} null when it is not usable
  */
-export function parseGoogleRedirect(redirectUrl, { state, nonce, clientId }) {
-  if (!redirectUrl) throw new Error('Sign-in was cancelled.');
-  const url = new URL(redirectUrl);
-  const params = new URLSearchParams(url.hash.replace(/^#/, ''));
-  for (const [k, v] of url.searchParams) if (!params.has(k)) params.set(k, v);
-
-  if (params.get('error')) throw new Error(`Google refused sign-in: ${params.get('error_description') || params.get('error')}`);
-  if (params.get('state') !== state) throw new Error('Sign-in response did not match this request. Try again.');
-  const idToken = params.get('id_token');
-  if (!idToken) throw new Error('Google did not return an ID token.');
-
-  const claims = decodeJwtPayload(idToken);
-  if (claims.nonce !== nonce) throw new Error('Sign-in response did not match this request. Try again.');
-  if (clientId && claims.aud !== clientId) throw new Error('Google returned a token for a different app.');
-  return idToken;
-}
-
-/** Message from an Identity Toolkit / Secure Token error body, e.g. "INVALID_IDP_RESPONSE". */
-export function firebaseErrorMessage(body, fallback) {
-  const raw = body?.error?.message;
-  return typeof raw === 'string' && raw ? raw.split(' : ')[0] : fallback;
-}
-
-/**
- * Session from `accounts:signInWithIdp`.
- * @returns {{idToken: string, refreshToken: string, expiresAt: number, email: string, name: string, uid: string}}
- */
-export function sessionFromSignIn(body, now = Date.now()) {
-  if (!body?.idToken || !body?.refreshToken) throw new Error('Firebase did not return a session.');
-  const claims = decodeJwtPayloadSafe(body.idToken);
+export function normalizeAlert(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const asin = String(raw.asin || '').toUpperCase();
+  const targetPrice = money(raw.targetPrice);
+  if (!/^[A-Z0-9]{10}$/.test(asin) || !targetPrice) return null;
   return {
-    idToken: body.idToken,
-    refreshToken: body.refreshToken,
-    expiresAt: now + (Number(body.expiresIn) > 0 ? Number(body.expiresIn) : 3600) * 1000,
-    email: String(body.email || claims.email || '').toLowerCase(),
-    name: String(body.displayName || claims.name || ''),
-    uid: String(body.localId || claims.user_id || claims.sub || '')
+    id: alertId(asin),
+    asin,
+    title: String(raw.title || '').slice(0, MAX_TITLE),
+    targetPrice,
+    status: raw.status === 'paused' || raw.status === 'triggered' ? raw.status : 'active',
+    priceAtCreation: money(raw.priceAtCreation),
+    lastPrice: money(raw.lastPrice),
+    lastCheckedAt: time(raw.lastCheckedAt),
+    createdAt: time(raw.createdAt) || Date.now(),
+    triggeredAt: time(raw.triggeredAt),
+    triggeredPrice: money(raw.triggeredPrice)
   };
 }
 
-/** Session update from the Secure Token refresh response (snake_case fields). */
-export function refreshSession(session, body, now = Date.now()) {
-  if (!body?.id_token) throw new Error('Firebase did not return a refreshed token.');
-  return {
-    ...session,
-    idToken: body.id_token,
-    refreshToken: body.refresh_token || session.refreshToken,
-    expiresAt: now + (Number(body.expires_in) > 0 ? Number(body.expires_in) : 3600) * 1000
-  };
-}
-
-function decodeJwtPayloadSafe(token) {
-  try {
-    return decodeJwtPayload(token);
-  } catch {
-    return {};
+/** Clean the stored list: drop junk, one alert per product (the first wins), newest first, capped. */
+export function sanitizeAlerts(list) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(list) ? list : []) {
+    const alert = normalizeAlert(raw);
+    if (!alert || seen.has(alert.id)) continue;
+    seen.add(alert.id);
+    out.push(alert);
   }
+  return out.sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_ALERTS);
 }
-
-/** True while the ID token can still be used without refreshing. */
-export const isTokenFresh = (session, margin, now = Date.now()) => Boolean(session?.idToken) && session.expiresAt - margin > now;
-
-/** A session that still holds a refresh token can be renewed. */
-export const canRefresh = (session) => Boolean(session?.refreshToken);
 
 /**
  * Validate a target typed on the product page.
@@ -117,57 +68,126 @@ export function validateTarget(value, currentPrice) {
   return cents;
 }
 
-/** Body of `POST /api/create-alert`. The server resolves title, live price and forecast itself. */
-export function buildCreateBody({ email, asin, targetPrice }) {
-  return {
-    email,
-    targetType: 'asin',
-    targetValue: `https://www.amazon.com/dp/${asin}`,
-    targetPrice
-  };
-}
-
-/** Body of `POST /api/my-alerts` for an update. Only the fields that are present are sent. */
-export function buildUpdateBody({ alertId, targetPrice, status }) {
-  const body = { action: 'update', alertId };
-  if (targetPrice !== undefined) body.targetPrice = targetPrice;
-  if (status !== undefined) {
-    if (status !== 'active' && status !== 'paused') throw new Error('status must be "active" or "paused"');
-    body.status = status;
-  }
-  return body;
-}
-
-export const buildDeleteBody = (alertId) => ({ action: 'delete', alertId });
+export const findAlert = (list, asin) => list.find((a) => a.asin === String(asin).toUpperCase()) || null;
 
 /**
- * Defensive read of an alert document from the website.
- * @returns {{id: string, asin: string, targetPrice: number|null, status: 'active'|'paused'|'triggered', title: string, priceAtCreation: number|null, retailer: string}|null}
+ * Create the alert for a product, or re-aim the one that exists (one alert per product).
+ * @returns {{list: object[], alert: object}}
  */
-export function normalizeAlert(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const id = String(raw.id ?? raw.alertId ?? '');
-  const asin = String(raw.targetValue || '').toUpperCase();
-  if (!id || !asin) return null;
-  const num = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) || Number(v) <= 0 ? null : Number(v));
+export function upsertAlert(list, { asin, title, targetPrice, currentPrice }, now = Date.now()) {
+  const target = validateTarget(targetPrice, Number(currentPrice));
+  const key = String(asin).toUpperCase();
+  if (!/^[A-Z0-9]{10}$/.test(key)) throw new Error('Invalid ASIN');
+  const existing = findAlert(list, key);
+  const alert = normalizeAlert({
+    ...existing,
+    asin: key,
+    title: title || existing?.title || '',
+    targetPrice: target,
+    status: 'active',
+    priceAtCreation: existing?.priceAtCreation ?? money(currentPrice),
+    lastPrice: money(currentPrice) ?? existing?.lastPrice,
+    lastCheckedAt: money(currentPrice) ? now : existing?.lastCheckedAt,
+    createdAt: existing?.createdAt ?? now,
+    triggeredAt: null,
+    triggeredPrice: null
+  });
+  const rest = list.filter((a) => a.id !== alert.id);
+  if (!existing && rest.length >= MAX_ALERTS) throw new Error(`You can keep up to ${MAX_ALERTS} price alerts. Remove one first.`);
+  return { list: sanitizeAlerts([alert, ...rest]), alert };
+}
+
+/**
+ * Change an alert's target, title and/or status. A new target re-arms a fired alert.
+ * @returns {{list: object[], alert: object}}
+ */
+export function patchAlert(list, id, { targetPrice, status, title, currentPrice, toggleOnly }) {
+  const existing = list.find((a) => a.id === id);
+  if (!existing) throw new Error('That alert no longer exists.');
+  if (status !== undefined && status !== 'active' && status !== 'paused') throw new Error('status must be "active" or "paused"');
+  const next = { ...existing };
+  if (targetPrice !== undefined) {
+    next.targetPrice = validateTarget(targetPrice, toggleOnly ? 0 : Number(currentPrice));
+    next.status = 'active';
+  }
+  if (status !== undefined) next.status = status;
+  if (title) next.title = title;
+  if (next.status !== 'triggered') {
+    next.triggeredAt = null;
+    next.triggeredPrice = null;
+  }
+  const alert = normalizeAlert(next);
+  return { list: list.map((a) => (a.id === id ? alert : a)), alert };
+}
+
+export const removeAlertFrom = (list, id) => list.filter((a) => a.id !== id);
+
+/**
+ * Record a price the extension saw for a product and fire the alert if it reached the target.
+ * @returns {{list: object[], fired: object|null, changed: boolean}}
+ */
+export function observePrice(list, asin, price, now = Date.now()) {
+  const p = money(price);
+  const key = String(asin).toUpperCase();
+  const existing = findAlert(list, key);
+  if (!existing || !p) return { list, fired: null, changed: false };
+  const next = { ...existing, lastPrice: p, lastCheckedAt: now };
+  let fired = null;
+  if (existing.status === 'active' && p <= existing.targetPrice) {
+    next.status = 'triggered';
+    next.triggeredAt = now;
+    next.triggeredPrice = p;
+    fired = next;
+  }
+  return { list: list.map((a) => (a.id === existing.id ? next : a)), fired, changed: true };
+}
+
+/** Active alerts that have not been checked for `recheckMs`, least recently checked first. */
+export function dueForCheck(list, now, recheckMs, limit) {
+  return list
+    .filter((a) => a.status === 'active' && now - (a.lastCheckedAt || 0) >= recheckMs)
+    .sort((a, b) => (a.lastCheckedAt || 0) - (b.lastCheckedAt || 0))
+    .slice(0, limit);
+}
+
+/** Fired alerts first, then active, then paused; stable within a group (the stored list is newest first). */
+export function sortAlerts(alerts) {
+  const rank = { triggered: 0, active: 1, paused: 2 };
+  return alerts.map((a, i) => [a, i]).sort((x, y) => rank[x[0].status] - rank[y[0].status] || x[1] - y[1]).map(([a]) => a);
+}
+
+export function summarizeAlerts(alerts) {
+  const summary = { total: alerts.length, active: 0, paused: 0, triggered: 0 };
+  for (const a of alerts) summary[a.status]++;
+  return summary;
+}
+
+/** Toolbar badge: the number of alerts that reached their target and are waiting for the user. */
+export function badgeFor(summary) {
+  const n = summary.triggered;
+  if (!n) {
+    const quiet = summary.active ? `PriceOracle: watching ${summary.active} price alert${summary.active === 1 ? '' : 's'}` : 'PriceOracle';
+    return { text: '', title: quiet };
+  }
+  return { text: n > 99 ? '99+' : String(n), title: `PriceOracle: ${n} price alert${n === 1 ? '' : 's'} reached your target` };
+}
+
+const usd = (n) => `$${Number(n).toFixed(2)}`;
+
+/** Text of the desktop notification for a fired alert. */
+export function notificationText(alert) {
+  const name = alert.title || `Amazon item ${alert.asin}`;
   return {
-    id,
-    asin,
-    targetType: String(raw.targetType || ''),
-    retailer: String(raw.retailer || 'amazon'),
-    targetPrice: num(raw.targetPrice),
-    status: raw.status === 'paused' || raw.status === 'triggered' ? raw.status : 'active',
-    title: String(raw.productTitle || ''),
-    priceAtCreation: num(raw.currentPriceAtCreation)
+    title: 'Price target reached',
+    message: `${name.length > 90 ? `${name.slice(0, 89)}…` : name} is ${usd(alert.triggeredPrice ?? alert.lastPrice)}, at or below your ${usd(alert.targetPrice)} target.`
   };
 }
 
-/** The newest alert for an Amazon product (the list is newest first). */
-export function findAlertForAsin(list, asin) {
-  const wanted = String(asin).toUpperCase();
-  for (const raw of Array.isArray(list) ? list : []) {
-    const alert = normalizeAlert(raw);
-    if (alert && alert.targetType === 'asin' && alert.retailer !== 'bestbuy' && alert.asin === wanted) return alert;
-  }
-  return null;
+export const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(value || '').trim());
+
+/** A mailto: link that lets the user send themselves the deal with one click (the extension never sends mail). */
+export function mailtoUrl(email, alert) {
+  const { message } = notificationText(alert);
+  const body = `${message}\n\nhttps://www.amazon.com/dp/${alert.asin}`;
+  return `mailto:${String(email).trim()}?subject=${encodeURIComponent('PriceOracle: price target reached')}&body=${encodeURIComponent(body)}`;
 }

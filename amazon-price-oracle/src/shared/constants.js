@@ -36,8 +36,9 @@ export const STORAGE_KEYS = Object.freeze({
   LAST_ANALYSIS: 'last_analysis',
   RECENT_ANALYSES: 'recent_analyses',
   ANALYSIS_COUNT: 'analysis_count',
-  ACCOUNT_SESSION: 'account_session',
-  ACCOUNT_MARKER: 'account_marker'
+  PRICE_ALERTS: 'price_alerts',
+  ALERT_EMAIL: 'alert_email',
+  ALERT_BACKGROUND: 'alert_background_checks'
 });
 
 /** context.dev responses are cached per ASIN for 24 hours to preserve credits. */
@@ -63,32 +64,25 @@ export const MSG = Object.freeze({
   OPEN_OPTIONS: 'PO_OPEN_OPTIONS',
   CLEAR_CACHE: 'PO_CLEAR_CACHE',
   CLEAR_HISTORY: 'PO_CLEAR_HISTORY',
-  ACCOUNT_STATUS: 'PO_ACCOUNT_STATUS',
-  ACCOUNT_SIGN_IN: 'PO_ACCOUNT_SIGN_IN',
-  ACCOUNT_SIGN_OUT: 'PO_ACCOUNT_SIGN_OUT',
   ALERT_STATE: 'PO_ALERT_STATE',
   ALERT_CREATE: 'PO_ALERT_CREATE',
   ALERT_UPDATE: 'PO_ALERT_UPDATE',
-  ALERT_REMOVE: 'PO_ALERT_REMOVE'
+  ALERT_REMOVE: 'PO_ALERT_REMOVE',
+  ALERT_LIST: 'PO_ALERT_LIST',
+  ALERT_TEST_NOTIFICATION: 'PO_ALERT_TEST_NOTIFICATION'
 });
 
 /**
- * PriceOracle alerts live on the website's Firebase project (xylm-306e6). The extension signs in with
- * Google, exchanges the Google ID token for a Firebase ID token (Identity Toolkit REST, no SDK), and calls
- * the site's HTTP API from the service worker. Never write to Firestore directly. See
- * docs/ALERTS_INTEGRATION.md.
+ * Price alerts are stored on this device (chrome.storage.local, key PRICE_ALERTS). There is no account, no
+ * sign-in and no server. The extension alerts the user itself (notification, toolbar badge, product card), and
+ * a content script shows the same alerts on the PriceOracle website's alerts page. See docs/ALERTS_INTEGRATION.md.
  */
-export const API_BASE = 'https://xylm-306e6.web.app';
-/** Firebase web API key (public by design; served at /__/firebase/init.json on the hosting site). */
-export const FIREBASE_API_KEY = 'AIzaSyDj97uXv2ETmA-FvwGRV0-_Tn686d2E6L8';
-/** The Google OAuth web client Firebase Auth created for the project (found via accounts:createAuthUri). */
-export const GOOGLE_OAUTH_CLIENT_ID = '754413445676-dsqaqjdq1r5mpla7or2mlgjkg4cnf97m.apps.googleusercontent.com';
-export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
-export const IDENTITY_TOOLKIT_URL = 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp';
-export const SECURE_TOKEN_URL = 'https://securetoken.googleapis.com/v1/token';
-/** Normal alert API calls. */
-export const API_TIMEOUT_MS = 20000;
-/** The first lookup of a product can take 13-47 s on the server; allow well over a minute. */
-export const CREATE_ALERT_TIMEOUT_MS = 75000;
-/** Refresh the Firebase ID token this long before it expires. */
-export const TOKEN_REFRESH_MARGIN_MS = 2 * 60 * 1000;
+export const SITE_ALERTS_URL = 'https://xylm-306e6.web.app/alerts/';
+
+/** Background price checks run on this alarm. */
+export const ALERT_CHECK_ALARM = 'po-alert-check';
+export const ALERT_CHECK_MINUTES = 60;
+/** An alert is not re-checked in the background more often than this (each check is one context.dev credit). */
+export const ALERT_RECHECK_MS = 4 * 60 * 60 * 1000;
+/** At most this many alerts are checked per alarm, so a long list cannot drain credits at once. */
+export const ALERT_CHECK_BATCH = 5;

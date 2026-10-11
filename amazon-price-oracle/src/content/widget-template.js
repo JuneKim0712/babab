@@ -257,10 +257,10 @@
     '<svg class="po-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5a3.5 3.5 0 0 0-3.5 3.5c0 3-1.5 4-1.5 4h10s-1.5-1-1.5-4A3.5 3.5 0 0 0 8 2.5z"/><path d="M6.6 12.5a1.5 1.5 0 0 0 2.8 0"/></svg>';
 
   /**
-   * Price-alert section of the product card. `a` is the content script's view of the signed-in account:
-   * {phase: 'loading'|'signed_out'|'ready'|'error', alert?, email?, suggested?, draft?, busy?, creating?, error?, expired?}
-   * where alert = {targetPrice: number|null, status: 'active'|'paused'|'triggered', priceAtCreation?: number|null}.
-   * Returns '' when absent (older callers, search chips).
+   * Price-alert section of the product card. `a` is the content script's view of this device's alert:
+   * {phase: 'loading'|'ready'|'error', alert?, email?, suggested?, draft?, busy?, error?}
+   * where alert = {targetPrice: number, status: 'active'|'paused'|'triggered', priceAtCreation?: number|null,
+   * triggeredPrice?: number|null}. Returns '' when absent (older callers, search chips).
    */
   function renderAlert(a, currentPrice) {
     if (!a) return '';
@@ -270,11 +270,7 @@
     let body;
     switch (a.phase) {
       case 'loading':
-        body = '<div class="po-alert-text">Checking your alerts…</div>';
-        break;
-      case 'signed_out':
-        body = `<div class="po-alert-text">${a.expired ? 'Your sign-in expired. ' : ''}Sign in with Google to set a price alert for this item. Alerts are emailed to your Google account address.</div>
-          <div><button class="po-btn primary" type="button" data-action="alert-signin"${disabled}>${a.busy ? 'Waiting for Google…' : 'Sign in with Google'}</button></div>${err}`;
+        body = '<div class="po-alert-text">Checking your alert…</div>';
         break;
       case 'error':
         body = `<div class="po-alert-error" role="alert">Price alerts are unavailable: ${escapeHtml(a.error || 'unknown error')}</div>
@@ -284,25 +280,21 @@
         const existing = a.alert;
         const value = a.draft !== undefined ? a.draft : Number(existing && existing.targetPrice ? existing.targetPrice : a.suggested).toFixed(2);
         const field = `<span class="po-money"><span aria-hidden="true">$</span><input class="po-input" type="text" inputmode="decimal" autocomplete="off" data-field="alert-target" aria-label="Target price in US dollars" value="${escapeHtml(value)}"${disabled} /></span>`;
-        const pending = a.creating
-          ? '<div class="po-alert-text" role="status">Saving your alert. Looking up a product for the first time can take up to a minute.</div>'
-          : '';
         if (!existing) {
-          body = `<div class="po-alert-text">Email me when the price is at or below:</div>
-            <div class="po-alert-form">${field}<button class="po-btn primary" type="button" data-action="alert-save"${disabled}>${a.creating ? 'Saving…' : 'Set alert'}</button></div>${pending}${err}`;
+          body = `<div class="po-alert-text">Tell me when the price is at or below:</div>
+            <div class="po-alert-form">${field}<button class="po-btn primary" type="button" data-action="alert-save"${disabled}>Set alert</button></div>${err}`;
         } else {
           const { status } = existing;
-          const hasTarget = Boolean(existing.targetPrice);
-          const reached = status === 'active' && hasTarget && currentPrice <= existing.targetPrice;
-          const label = status === 'triggered' ? 'Alert sent' : status === 'paused' ? 'Alert paused' : reached ? 'Target reached' : 'Alert on';
+          const reached = status === 'active' && currentPrice <= existing.targetPrice;
+          const label = status === 'triggered' ? 'Target reached' : status === 'paused' ? 'Alert paused' : reached ? 'Target reached' : 'Alert on';
           const chipClass = status === 'paused' ? 'warn' : reached || status === 'triggered' ? 'ok' : '';
-          const goal = hasTarget ? `<strong>${usd(existing.targetPrice)}</strong>` : 'a price drop';
+          const goal = `<strong>${usd(existing.targetPrice)}</strong>`;
           const detail =
             status === 'triggered'
-              ? `emailed when the price reached ${goal}. Re-arm to be told again`
+              ? `the price hit ${usd(existing.triggeredPrice || existing.targetPrice)} (target ${goal}). Re-arm to be told again`
               : status === 'paused'
-                ? `would email at or below ${goal}`
-                : `emailing at or below ${goal}`;
+                ? `would notify you at or below ${goal}`
+                : `notifying you at or below ${goal}`;
           const toggle = status === 'active' ? ['Turn off', 'paused'] : [status === 'triggered' ? 'Re-arm' : 'Turn on', 'active'];
           const created = existing.priceAtCreation ? ` · price when set ${usd(existing.priceAtCreation)}` : '';
           body = `<div class="po-alert-status"><span class="po-chip ${chipClass}"><i class="po-dot"></i>${label}</span><span class="po-alert-text">${detail}${created}</span></div>
@@ -312,7 +304,10 @@
               <button class="po-link" type="button" data-action="alert-remove"${disabled}>Remove</button>
             </div>${err}`;
         }
-        if (a.email) body += `<div class="po-note">Alerts go to ${escapeHtml(a.email)} · <button class="po-link" type="button" data-action="alert-account">Account settings</button></div>`;
+        const where = a.email
+          ? `Saved on this device. Chrome notifies you, with an "Email me this" button for ${escapeHtml(a.email)}.`
+          : 'Saved on this device. Chrome notifies you when the target is reached.';
+        body += `<div class="po-note">${where} <button class="po-link" type="button" data-action="alert-settings">Settings</button></div>`;
       }
     }
     return `<div class="po-section po-alert" data-phase="${escapeHtml(a.phase)}">${head}${body}</div>`;
@@ -442,6 +437,8 @@
     .pc-label { font-weight: 700; letter-spacing: 0.02em; }
     .pc-delta { font-weight: 600; font-variant-numeric: tabular-nums; }
     .pc-caret { font-size: 9px; opacity: 0.75; }
+    .pc-bell { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; padding-left: 6px; border-left: 1px solid currentColor; }
+    .pc-bell .po-icon { width: 12px; height: 12px; }
     .pc-panel { margin-top: 6px; padding: 10px 12px; border: 1px solid var(--po-rule); border-radius: 8px; background: var(--po-paper); display: grid; gap: 6px; }
     .pc-msg { font-weight: 700; }
     .pc-tiers { display: grid; grid-template-columns: repeat(5, 1fr); text-align: center; gap: 2px; }
@@ -492,9 +489,18 @@
         <div class="pc-tiers" aria-label="30-day projected price tiers">${cells}</div>
         <div class="pc-note">30-day: ${pct} (${sign}${usd(Math.abs(deltaAmount))}) · ${gemini}</div>
         ${meta.history ? `<div class="pc-note">${escapeHtml(historyText(meta.history))}</div>` : ''}
+        ${state.alert ? `<div class="pc-note">${escapeHtml(chipAlertText(state.alert).long)}</div>` : ''}
         ${quick ? '<div class="pc-note">Quick estimate from the price on this card. Open the product page or run a deep analysis for page-level signals.</div>' : ''}
         ${deep}
       </div>`;
+  }
+
+  /** What the chip and panel say about the user's alert for this product ({status, targetPrice}). */
+  function chipAlertText(alert) {
+    const goal = alert.targetPrice ? usd(alert.targetPrice) : 'any drop';
+    if (alert.status === 'triggered') return { short: 'Target reached', long: `Your price target was reached (${goal}). Open the product page to re-arm the alert.` };
+    if (alert.status === 'paused') return { short: 'Alert paused', long: `Your price alert is paused (target ${goal}). Open the product page to turn it on.` };
+    return { short: `Alert ${goal}`, long: `Price alert on: you will be notified at or below ${goal}. Open the product page to change it.` };
   }
 
   /** Small icon for the chip (same glyphs as the card, sized down by CSS). */
@@ -515,7 +521,7 @@
       chip = `<button class="pc-chip ${escapeHtml(recommendation.action)}" type="button" data-action="toggle" aria-expanded="${Boolean(state.expanded)}"
         title="PriceOracle 30-day outlook. Click for details.">
         ${chipIcon(recommendation.action)}<span class="pc-label">${escapeHtml(recommendation.label)}</span>
-        <span class="pc-delta">${pct} / 30d</span><span class="pc-caret" aria-hidden="true">${state.expanded ? '▲' : '▼'}</span></button>`;
+        <span class="pc-delta">${pct} / 30d</span>${state.alert ? `<span class="pc-bell" title="${escapeHtml(chipAlertText(state.alert).long)}">${ALERT_ICON}${escapeHtml(chipAlertText(state.alert).short)}</span>` : ''}<span class="pc-caret" aria-hidden="true">${state.expanded ? '▲' : '▼'}</span></button>`;
       if (state.expanded) panel = renderChipPanel(state.data, state);
     } else if (state.status === 'error') {
       chip = `<button class="pc-chip error" type="button" data-action="retry" title="${escapeHtml(state.error || 'Unavailable')}">PriceOracle unavailable — retry</button>`;

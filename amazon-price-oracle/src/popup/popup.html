@@ -32,6 +32,13 @@
       </div>
     </section>
 
+    <section class="card" id="alerts-card" aria-labelledby="alerts-title" hidden>
+      <h2 id="alerts-title" class="label">Your price alerts</h2>
+      <ul id="alerts-list" class="alerts"></ul>
+      <p id="alerts-more" class="muted small" hidden></p>
+      <p class="small"><a id="site-alerts" href="https://xylm-306e6.web.app/alerts/" target="_blank" rel="noopener noreferrer">Open the alerts page</a></p>
+    </section>
+
     <section class="card" id="recent-card" aria-labelledby="recent-title" hidden>
       <h2 id="recent-title" class="label">Recently analysed</h2>
       <ul id="recent-list" class="recent"></ul>
@@ -55,10 +62,10 @@
       </div>
       <div class="key-row">
         <span>Price alerts</span>
-        <span id="account-status" class="badge"></span>
+        <span id="alerts-status" class="badge"></span>
       </div>
       <p id="gem-hint" class="muted small"></p>
-      <p id="account-hint" class="muted small"></p>
+      <p id="alerts-hint" class="muted small"></p>
       <div class="actions">
         <button id="clear-cache" class="btn primary" type="button">Clear cache</button>
       </div>
