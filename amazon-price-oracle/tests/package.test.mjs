@@ -65,14 +65,25 @@ test('message names mirrored in content.js exist in shared constants', async () 
 });
 
 test('the extension asks only for the permissions it needs', () => {
-  assert.deepEqual([...manifest.permissions].sort(), ['identity', 'scripting', 'storage']);
+  assert.deepEqual([...manifest.permissions].sort(), ['alarms', 'notifications', 'scripting', 'storage']);
   assert.ok(!manifest.host_permissions.some((h) => h === '<all_urls>' || h === 'https://*/*'), 'no broad host permissions');
-  assert.ok(manifest.host_permissions.includes('https://xylm-306e6.web.app/*'), 'the alerts API needs host permission (it sends no CORS headers)');
+  assert.ok(!manifest.host_permissions.some((h) => /xylm|googleapis/.test(h)), 'alerts are local: no host permission for the website or Google');
+  const site = manifest.content_scripts.find((c) => c.matches.includes('https://xylm-306e6.web.app/*'));
+  assert.ok(site && site.js.includes('src/content/site-alerts.js'), 'the website alerts page gets the extension alerts through a content script');
 });
 
-test('manifest key pins the extension id used for the Google redirect URI', async () => {
+test('manifest key pins the extension id, so the extension keeps its local data', async () => {
   const crypto = await import('node:crypto');
   const hex = crypto.createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex').slice(0, 32);
   const id = [...hex].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
   assert.equal(id, 'gnckobeflimeehgaaliiibfliebjapbe');
+});
+
+test('the website content script uses message names that exist', async () => {
+  const { MSG } = await import('../src/shared/constants.js');
+  const src = fs.readFileSync(path.join(root, 'src/content/site-alerts.js'), 'utf8');
+  const block = src.match(/const MSG = \{([\s\S]*?)\};/)[1];
+  const pairs = [...block.matchAll(/(\w+):\s*'([A-Z_]+)'/g)];
+  assert.ok(pairs.length >= 3);
+  for (const [, key, value] of pairs) assert.equal(MSG[key], value, `MSG.${key} differs from constants.js`);
 });

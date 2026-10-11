@@ -35,7 +35,7 @@ const browser = await puppeteer.launch({
     '--no-sandbox',
     `--disable-extensions-except=${root}`,
     `--load-extension=${root}`,
-    `--host-resolver-rules=MAP www.amazon.com 127.0.0.1:${PORT}, MAP api.context.dev 127.0.0.1:${PORT}, MAP api.gemini.com 127.0.0.1:${PORT}, MAP xylm-306e6.web.app 127.0.0.1:${PORT}, MAP accounts.google.com 127.0.0.1:${PORT}, MAP identitytoolkit.googleapis.com 127.0.0.1:${PORT}, MAP securetoken.googleapis.com 127.0.0.1:${PORT}`,
+    `--host-resolver-rules=MAP www.amazon.com 127.0.0.1:${PORT}, MAP api.context.dev 127.0.0.1:${PORT}, MAP api.gemini.com 127.0.0.1:${PORT}, MAP xylm-306e6.web.app 127.0.0.1:${PORT}`,
     '--ignore-certificate-errors',
     '--window-size=1280,1000'
   ]
@@ -405,9 +405,10 @@ try {
     assert.equal(stats.extract, before + 2);
   });
 
-  // ---- Google sign-in (Firebase) + price alerts through the website API --------------------------------
+  // ---- Local price alerts (no account): card, notification, badge, popup, search bell, website page ------
   const EXPECTED_EXT_ID = 'gnckobeflimeehgaaliiibfliebjapbe';
-  const site = stats.site;
+  const SITE = 'https://xylm-306e6.web.app';
+  const ASIN = 'B0CX23V258';
   const waitAlert = (pg, phase) =>
     pg.waitForFunction(
       (ph) => document.getElementById('price-oracle-host')?.shadowRoot?.querySelector(`.po-alert[data-phase="${ph}"]`),
@@ -428,79 +429,93 @@ try {
     await page.goto(PRODUCT, { waitUntil: 'load' });
     await waitReady(page);
   };
-  const alertsOnServer = () => Object.values(site.alerts).filter((a) => a.targetValue === 'B0CX23V258');
-  const storedSession = () => opts.evaluate(() => chrome.storage.local.get('account_session').then((s) => s.account_session));
+  const stored = () => opts.evaluate(() => chrome.storage.local.get('price_alerts').then((s) => s.price_alerts || []));
+  const mine = async () => (await stored()).find((a) => a.asin === ASIN);
+  const send = (message) => opts.evaluate((m) => chrome.runtime.sendMessage(m), message);
+  const badge = (pg) => pg.evaluate(() => chrome.action.getBadgeText({}));
+  const waitBadge = (pg, text) => pg.waitForFunction((t) => chrome.action.getBadgeText({}).then((b) => b === t), { timeout: 10000, polling: 100 }, text);
+  const notifications = () => opts.evaluate(() => new Promise((r) => chrome.notifications.getAll(r)));
+  const clearNotifications = () => opts.evaluate(async () => {
+    for (const id of Object.keys(await new Promise((r) => chrome.notifications.getAll(r)))) await chrome.notifications.clear(id);
+  });
+  /** What visiting a product page does: the page price goes through the same analysis the card uses. */
+  const seePrice = (asin, price) => send({ type: 'PO_ANALYZE_PRODUCT', payload: { asin, price, title: `Item ${asin}` } });
+  const resetAlerts = () => opts.evaluate(() => chrome.storage.local.remove('price_alerts'));
 
-  await step('the extension id is stable (manifest key), so one Google redirect URI can be registered', async () => {
+  await step('the extension id is stable (manifest key), so the extension keeps its local data across reinstalls', async () => {
     assert.equal(extId, EXPECTED_EXT_ID);
   });
 
-  await step('signed out: the card offers Google sign-in and makes no network request', async () => {
-    await reloadProduct();
-    await waitAlert(page, 'signed_out');
-    assert.match(await alertText(page), /Sign in with Google to set a price alert/);
-    assert.equal(site.signIns + site.lists + site.refreshes, 0);
-  });
-
-  await step('card: Sign in with Google runs Google OAuth, exchanges the token with Firebase and shows the account', async () => {
-    await clickAlert(page, 'alert-signin');
-    await waitAlert(page, 'ready');
-    const p = site.lastAuthParams;
-    assert.equal(p.response_type, 'id_token');
-    assert.equal(p.scope, 'openid email profile');
-    assert.equal(p.client_id, '754413445676-dsqaqjdq1r5mpla7or2mlgjkg4cnf97m.apps.googleusercontent.com');
-    assert.ok(p.nonce.length >= 16 && p.state.length >= 16);
-    assert.equal(p.redirect_uri, `https://${EXPECTED_EXT_ID}.chromiumapp.org/`);
-    assert.equal(site.signIns, 1);
-    const session = await storedSession();
-    assert.equal(session.idToken, 'fbid_1');
-    assert.equal(session.refreshToken, 'rt_1');
-    assert.equal(session.email, 'june@example.com');
-    assert.match(await alertText(page), /Alerts go to june@example\.com/);
-    assert.equal(site.lists, 1);
-    assert.match(site.lastAuthorization, /^Bearer fbid_1$/);
-  });
-
-  await step('Settings shows the signed-in account and an alert count', async () => {
+  await step('Settings has an email field, a background-check switch and no account or sign-in', async () => {
     await opts.bringToFront();
     await opts.reload({ waitUntil: 'load' });
-    await opts.waitForFunction(() => /Signed in as june@example\.com\. 0 active alerts/.test(document.getElementById('account-state').textContent), { timeout: 10000 });
-    assert.equal(await opts.$eval('#account-signout', (el) => el.hidden), false);
+    assert.equal(await opts.$('#account-signin'), null);
+    assert.doesNotMatch(await opts.$eval('body', (el) => el.textContent), /Google account|Sign in with Google|Firebase/);
+    assert.equal(await opts.$eval('#alert-email', (el) => el.value), '');
+    assert.equal(await opts.$eval('#alert-background', (el) => el.checked), true);
+    assert.match(await opts.$eval('#alerts-title', (el) => el.parentElement.textContent), /saved in this browser/);
   });
 
-  await step('create: explicit click only; pending state, then the stored alert comes from the server', async () => {
+  await step('Settings: an invalid email is refused; a valid one is saved on this device', async () => {
+    await opts.type('#alert-email', 'not-an-email');
+    await opts.click('#save');
+    await opts.waitForFunction(() => /does not look right/.test(document.getElementById('banner').textContent), { timeout: 5000 });
+    assert.deepEqual(await opts.evaluate(() => chrome.storage.local.get('alert_email')), {});
+    await opts.$eval('#alert-email', (el) => { el.value = ''; });
+    await opts.type('#alert-email', 'june@example.com');
+    await opts.click('#save');
+    await opts.waitForFunction(() => /Settings saved/.test(document.getElementById('banner').textContent), { timeout: 5000 });
+    assert.equal((await opts.evaluate(() => chrome.storage.local.get('alert_email'))).alert_email, 'june@example.com');
+    await opts.screenshot({ path: path.join(shots, '02-options.png'), fullPage: true });
+  });
+
+  await step('Settings: "Send a test notification" shows a Chrome notification', async () => {
+    await clearNotifications();
+    await opts.click('#test-notification');
+    await opts.waitForFunction(() => /Test notification sent/.test(document.getElementById('banner').textContent), { timeout: 5000 });
+    assert.ok(Object.keys(await notifications()).includes('po-alert-TEST'));
+    await clearNotifications();
+  });
+
+  await step('card: no alert yet; nothing is stored or requested until the user clicks', async () => {
+    await resetAlerts();
     await reloadProduct();
     await waitAlert(page, 'ready');
-    assert.equal(site.creates, 0); // loading the page never creates anything
-    site.createDelayMs = 1500;
+    const html = await alertText(page);
+    assert.match(html, /Tell me when the price is at or below/);
+    assert.match(html, /Saved on this device\. Chrome notifies you, with an "Email me this" button for june@example\.com/);
+    assert.deepEqual(await stored(), []);
     const suggested = await shadow(page, (root) => root.querySelector('[data-field="alert-target"]').value);
     assert.match(suggested, /^\d+\.\d\d$/);
     assert.ok(Number(suggested) < 174.99);
+  });
+
+  await step('card: Set alert saves it locally and shows "Alert on"', async () => {
+    const calls = stats.extract;
     await typeTarget(page, '150');
     await clickAlert(page, 'alert-save');
-    await waitAlertText(page, /Saving your alert\. Looking up a product for the first time can take up to a minute/, 5000);
-    assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-save"]').disabled), true);
     await waitAlertText(page, /Alert on/);
-    site.createDelayMs = 0;
-    assert.deepEqual(site.lastCreate, { email: 'june@example.com', targetType: 'asin', targetValue: 'https://www.amazon.com/dp/B0CX23V258', targetPrice: 150 });
-    assert.equal(site.creates, 1);
-    assert.equal(site.lastAuthorization, 'Bearer fbid_1');
-    assert.equal(alertsOnServer()[0].userId, 'uid_june');
-    assert.match(await alertText(page), /emailing at or below \$150\.00 · price when set \$174\.99/);
+    assert.match(await alertText(page), /notifying you at or below \$150\.00 · price when set \$174\.99/);
+    const alert = await mine();
+    assert.equal(alert.targetPrice, 150);
+    assert.equal(alert.status, 'active');
+    assert.equal(alert.priceAtCreation, 174.99);
+    assert.equal(alert.id, `po-${ASIN}`);
+    assert.match(alert.title, /\S/);
+    assert.equal(stats.extract, calls, 'saving an alert makes no network request');
     await page.screenshot({ path: path.join(shots, '07-price-alert.png'), clip: { x: 0, y: 200, width: 1100, height: 780 } });
   });
 
-  await step('invalid targets are rejected before any request is made', async () => {
-    const calls = site.creates + site.updates;
+  await step('invalid targets are rejected and nothing changes', async () => {
     for (const [value, message] of [['999', /below the current price/], ['abc', /above \$0/], ['', /above \$0/]]) {
       await typeTarget(page, value);
       await clickAlert(page, 'alert-save');
       await waitAlertText(page, message, 10000);
     }
-    assert.equal(site.creates + site.updates, calls);
+    assert.equal((await mine()).targetPrice, 150);
   });
 
-  await step('changing the target updates the alert (Enter key too) without leaking keys to Amazon', async () => {
+  await step('changing the target (Enter key too) updates the alert without leaking keys to Amazon', async () => {
     await page.evaluate(() => {
       window.__leakedKeys = 0;
       document.addEventListener('keydown', () => window.__leakedKeys++);
@@ -511,157 +526,358 @@ try {
     await page.keyboard.type('145');
     assert.equal(await page.evaluate(() => window.__leakedKeys), 0);
     await page.keyboard.press('Enter');
-    await waitAlertText(page, /emailing at or below \$145\.00/);
-    assert.deepEqual(site.lastUpdate, { action: 'update', alertId: alertsOnServer()[0].id, targetPrice: 145 });
-    assert.equal(site.creates, 1);
+    await waitAlertText(page, /notifying you at or below \$145\.00/);
+    assert.equal((await mine()).targetPrice, 145);
+    assert.equal((await stored()).length, 1);
   });
 
-  await step('Turn off pauses (status only), survives a reload, and Turn on re-arms', async () => {
+  await step('Turn off pauses, survives a reload, and Turn on re-arms', async () => {
     await clickAlert(page, 'alert-toggle');
     await waitAlertText(page, /Alert paused/);
-    assert.deepEqual(site.lastUpdate, { action: 'update', alertId: alertsOnServer()[0].id, status: 'paused' });
-    assert.equal(alertsOnServer()[0].status, 'paused');
+    assert.equal((await mine()).status, 'paused');
     await reloadProduct();
     await waitAlert(page, 'ready');
-    assert.match(await alertText(page), /Alert paused.*would email at or below \$145\.00/);
+    assert.match(await alertText(page), /Alert paused.*would notify you at or below \$145\.00/);
     assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-toggle"]').textContent), 'Turn on');
+    await seePrice(ASIN, 100);
+    assert.equal((await mine()).status, 'paused', 'a paused alert never fires');
+    assert.deepEqual(await notifications(), {});
     await clickAlert(page, 'alert-toggle');
     await waitAlertText(page, /Alert on/);
-    assert.equal(site.lastUpdate.status, 'active');
-    assert.equal(alertsOnServer()[0].status, 'active');
+    assert.equal((await mine()).status, 'active');
   });
 
-  await step('a triggered alert shows "Alert sent" and can be re-armed', async () => {
-    alertsOnServer()[0].status = 'triggered';
+  await step('price at or below the target fires once: notification, badge, and the open card updates live', async () => {
+    await clearNotifications();
+    assert.equal(await badge(opts), '');
+    await seePrice(ASIN, 146);
+    assert.equal((await mine()).status, 'active', 'above the $145 target: nothing happens');
+    assert.deepEqual(await notifications(), {});
+    await seePrice(ASIN, 144);
+    const alert = await mine();
+    assert.equal(alert.status, 'triggered');
+    assert.equal(alert.triggeredPrice, 144);
+    const shown = await notifications();
+    assert.deepEqual(Object.keys(shown), [`po-alert-${ASIN}`]);
+    await waitBadge(opts, '1');
+    assert.match(await opts.evaluate(() => chrome.action.getTitle({})), /1 price alert reached your target/);
+    await waitAlertText(page, /Target reached.*the price hit \$144\.00/); // the card on the open tab updated without a reload
+
+    await clearNotifications();
+    await seePrice(ASIN, 120);
+    assert.deepEqual(await notifications(), {}, 'it does not notify twice');
+    assert.equal((await mine()).triggeredPrice, 144);
+  });
+
+  await step('a fired alert survives a reload and can be re-armed, which clears the badge', async () => {
     await reloadProduct();
     await waitAlert(page, 'ready');
-    assert.match(await alertText(page), /Alert sent.*Re-arm to be told again/);
+    assert.match(await alertText(page), /Target reached.*Re-arm to be told again/);
     assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-toggle"]').textContent), 'Re-arm');
     await clickAlert(page, 'alert-toggle');
     await waitAlertText(page, /Alert on/);
-    assert.equal(alertsOnServer()[0].status, 'active');
+    assert.equal((await mine()).status, 'active');
+    assert.equal((await mine()).triggeredPrice, null);
+    await waitBadge(opts, '');
   });
 
-  await step('Remove deletes it on the server', async () => {
-    await clickAlert(page, 'alert-remove');
-    await waitAlertText(page, /Email me when the price is at or below/);
-    assert.deepEqual(site.lastDelete, { action: 'delete', alertId: site.lastUpdate.alertId });
-    assert.equal(alertsOnServer().length, 0);
+  await step('a notification click opens the product; the email button opens a message to the address in Settings', async () => {
+    await seePrice(ASIN, 120);
+    await waitBadge(opts, '1');
+    const opened = await opts.evaluate(async (asin) => {
+      const alerts = await import(chrome.runtime.getURL('src/background/alerts.js'));
+      const api = await import(chrome.runtime.getURL('src/background/alerts-api.js'));
+      const before = (await chrome.tabs.query({})).length;
+      await alerts.handleNotificationClick(`po-alert-${asin}`, 0);
+      const tabs = await chrome.tabs.query({ url: `https://www.amazon.com/dp/${asin}*` });
+      const { alerts: list, email } = await alerts.getAlertsOverview();
+      const link = api.mailtoUrl(email, list[0]);
+      return { before, tabs: tabs.length, link };
+    }, ASIN);
+    assert.ok(opened.tabs >= 2, 'a new tab opened on the product page');
+    assert.match(opened.link, /^mailto:june@example\.com\?subject=PriceOracle%3A%20price%20target%20reached&body=/);
+    const extra = (await browser.pages()).filter((p) => p.url() === PRODUCT && p !== page);
+    for (const p of extra) await p.close();
+    await resetAlerts();
+    await waitBadge(opts, '');
+    await page.bringToFront();
   });
 
-  await step('an alert that already exists is updated, never duplicated (each create costs credits)', async () => {
-    site.alerts.al_seed = {
-      id: 'al_seed', email: 'june@example.com', userId: 'uid_june', targetType: 'asin', targetValue: 'B0CX23V258', retailer: 'amazon',
-      productTitle: 'Seeded', currentPriceAtCreation: 170, targetPrice: 120, status: 'paused', createdAt: new Date().toISOString()
-    };
-    const creates = site.creates;
-    await typeTarget(page, '130'); // the open card does not know about the seeded alert yet
-    await clickAlert(page, 'alert-save');
-    await waitAlertText(page, /Alert on.*\$130\.00/);
-    assert.equal(site.creates, creates);
-    assert.equal(site.alerts.al_seed.targetPrice, 130);
-    assert.equal(site.alerts.al_seed.status, 'active');
-    delete site.alerts.al_seed;
-  });
-
-  await step('a failed lookup (422) shows the server message and saves nothing', async () => {
+  await step('Remove deletes the alert and the card goes back to "Set alert"', async () => {
     await reloadProduct();
     await waitAlert(page, 'ready');
-    site.create422 = true;
     await typeTarget(page, '150');
     await clickAlert(page, 'alert-save');
-    await waitAlertText(page, /Could not read a live price for this product\. Nothing was saved/);
-    assert.equal(alertsOnServer().length, 0);
+    await waitAlertText(page, /Alert on/);
+    await clickAlert(page, 'alert-remove');
+    await waitAlertText(page, /Tell me when the price is at or below/);
+    assert.deepEqual(await stored(), []);
+  });
+
+  await step('two tabs saving the same item at once keep a single alert', async () => {
+    const results = await opts.evaluate(() => Promise.all([120, 110].map((price) =>
+      chrome.runtime.sendMessage({ type: 'PO_ALERT_CREATE', payload: { asin: 'B0CX23V258', title: 'Headphones', currentPrice: 174.99, targetPrice: price } }))));
+    assert.ok(results.every((r) => r.ok), JSON.stringify(results));
+    const list = await stored();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].targetPrice, 110);
+    assert.equal(results[0].data.id, results[1].data.id);
+  });
+
+  await step('an alert deleted elsewhere: the card refreshes and says why', async () => {
+    await reloadProduct();
+    await waitAlert(page, 'ready');
+    assert.match(await alertText(page), /Alert on/);
+    await resetAlerts();
+    await waitAlertText(page, /Tell me when the price is at or below/); // live update from storage
+    await send({ type: 'PO_ALERT_CREATE', payload: { asin: ASIN, title: 'x', currentPrice: 174.99, targetPrice: 100 } });
+    await waitAlertText(page, /Alert on/);
+    await resetAlerts();
+    await waitAlertText(page, /Tell me when/);
     assert.equal(await shadow(page, (root) => root.querySelector('[data-action="alert-save"]').disabled), false);
-    site.create422 = false;
   });
 
-  await step('a rejected ID token is refreshed once and the request retried', async () => {
-    const refreshes = site.refreshes;
-    site.validTokens.clear();
-    await reloadProduct();
-    await waitAlert(page, 'ready');
-    assert.equal(site.refreshes, refreshes + 1);
-    assert.match(site.lastAuthorization, /^Bearer fbid_\d+$/);
-    assert.notEqual(site.lastAuthorization, 'Bearer fbid_1');
+  await step('background check: looks up stale alerts, fires when the live price is at the target, never hammers', async () => {
+    const OLD = Date.now() - 6 * 3600 * 1000;
+    const seedAlert = (asin, extra = {}) => ({ id: `po-${asin}`, asin, title: `Item ${asin}`, targetPrice: 100, status: 'active', priceAtCreation: 130, lastPrice: 130, lastCheckedAt: OLD, createdAt: OLD, ...extra });
+    await opts.evaluate((list) => chrome.storage.local.set({ price_alerts: list, context_cache: {} }), [
+      seedAlert('B0BGCHECK1'),
+      seedAlert('B0BGCHECK2'),
+      seedAlert('B0BGCHECK3', { lastCheckedAt: Date.now() - 1000 }),
+      seedAlert('B0BGCHECK4', { status: 'paused' })
+    ]);
+    stats.extractByAsin.B0BGCHECK1 = 95;
+    stats.extractByAsin.B0BGCHECK2 = 120;
+    stats.extractByAsin.B0BGCHECK3 = 50;
+    stats.extractByAsin.B0BGCHECK4 = 50;
+    await clearNotifications();
+    const before = stats.extract;
+    const result = await opts.evaluate(async () => (await import(chrome.runtime.getURL('src/background/alerts.js'))).runBackgroundCheck());
+    assert.equal(result.checked, 2);
+    assert.equal(stats.extract - before, 2, 'only the two stale active alerts were looked up');
+    const list = await stored();
+    const by = (asin) => list.find((a) => a.asin === asin);
+    assert.equal(by('B0BGCHECK1').status, 'triggered');
+    assert.equal(by('B0BGCHECK1').triggeredPrice, 95);
+    assert.equal(by('B0BGCHECK2').status, 'active');
+    assert.equal(by('B0BGCHECK2').lastPrice, 120);
+    assert.ok(by('B0BGCHECK2').lastCheckedAt > OLD);
+    assert.equal(by('B0BGCHECK3').lastPrice, 130, 'recently checked: left alone');
+    assert.equal(by('B0BGCHECK4').lastPrice, 130, 'paused: left alone');
+    assert.deepEqual(Object.keys(await notifications()), ['po-alert-B0BGCHECK1']);
+    await waitBadge(opts, '1');
+
+    const again = await opts.evaluate(async () => (await import(chrome.runtime.getURL('src/background/alerts.js'))).runBackgroundCheck());
+    assert.equal(again.checked, 0, 'nothing is due right after a check');
+    const alarm = await opts.evaluate(() => chrome.alarms.get('po-alert-check'));
+    assert.equal(alarm.periodInMinutes, 60);
+    await clearNotifications();
   });
 
-  await step('an ID token about to expire is refreshed before the request', async () => {
-    const refreshes = site.refreshes;
-    await opts.evaluate(() => chrome.storage.local.get('account_session').then((s) => chrome.storage.local.set({ account_session: { ...s.account_session, expiresAt: Date.now() + 20000 } })));
-    await reloadProduct();
-    await waitAlert(page, 'ready');
-    assert.equal(site.refreshes, refreshes + 1);
-    assert.ok((await storedSession()).expiresAt > Date.now() + 30 * 60 * 1000);
+  await step('background check can be switched off in Settings', async () => {
+    const OLD = Date.now() - 6 * 3600 * 1000;
+    await opts.evaluate((t) => chrome.storage.local.set({
+      alert_background_checks: false,
+      price_alerts: [{ id: 'po-B0BGCHECK9', asin: 'B0BGCHECK9', title: 'x', targetPrice: 10, status: 'active', lastCheckedAt: t, createdAt: t }]
+    }), OLD);
+    const before = stats.extract;
+    const result = await opts.evaluate(async () => (await import(chrome.runtime.getURL('src/background/alerts.js'))).runBackgroundCheck());
+    assert.equal(result.checked, 0);
+    assert.equal(stats.extract, before);
+    await opts.evaluate(() => chrome.storage.local.remove('alert_background_checks'));
+    await resetAlerts();
   });
 
-  await step('a revoked refresh token ends the session with an "expired" prompt', async () => {
-    site.refreshRevoked = true;
-    site.validTokens.clear();
-    await reloadProduct();
-    await waitAlert(page, 'signed_out');
-    assert.match(await alertText(page), /Your sign-in expired\. Sign in with Google/);
-    const session = await storedSession();
-    assert.equal(session.refreshToken, undefined);
-    assert.equal(session.idToken, undefined);
-    site.refreshRevoked = false;
+  const seed = (asin, status, extra = {}) => ({
+    id: `po-${asin}`, asin, title: `Seeded ${asin}`, targetPrice: 80, status, priceAtCreation: 100, lastPrice: 100, lastCheckedAt: Date.now() - 600000,
+    createdAt: Date.now(), triggeredAt: status === 'triggered' ? Date.now() : null, triggeredPrice: status === 'triggered' ? 55 : null, ...extra
   });
 
-  await step('a refused Google sign-in is reported and leaves the card signed out', async () => {
-    site.refuseLogin = true;
-    await clickAlert(page, 'alert-signin');
-    await waitAlertText(page, /Google refused sign-in: access_denied/);
-    assert.equal(await shadow(page, (root) => root.querySelector('.po-alert').dataset.phase), 'signed_out');
-    site.refuseLogin = false;
-    site.idpFail = true;
-    await clickAlert(page, 'alert-signin');
-    await waitAlertText(page, /Firebase sign-in failed: INVALID_IDP_RESPONSE/);
-    site.idpFail = false;
-  });
-
-  await step('signing in from Settings updates the open product page without a reload', async () => {
-    await opts.bringToFront();
-    await opts.click('#account-signin');
-    await opts.waitForFunction(() => /Signed in as june@example\.com/.test(document.getElementById('account-state').textContent), { timeout: 20000 });
-    await page.bringToFront();
-    await waitAlert(page, 'ready');
-  });
-
-  await step('popup shows the signed-in account and active alert count', async () => {
-    site.alerts.al_seed2 = {
-      id: 'al_seed2', email: 'june@example.com', userId: 'uid_june', targetType: 'asin', targetValue: 'B0SEARCH01', retailer: 'amazon',
-      productTitle: 'Other', currentPriceAtCreation: 50, targetPrice: 40, status: 'active', createdAt: new Date().toISOString()
-    };
-    site.alerts.al_bb = { ...site.alerts.al_seed2, id: 'al_bb', retailer: 'bestbuy', targetType: 'sku', targetValue: '6447382' };
+  await step('popup lists the alerts (reached first) with Re-arm; the badge counts reached alerts', async () => {
+    await opts.evaluate((list) => chrome.storage.local.set({ price_alerts: list }), [
+      seed('B0AAAAAAA3', 'paused', { createdAt: 1 }),
+      seed('B0AAAAAAA2', 'active', { createdAt: 2 }),
+      seed('B0AAAAAAA1', 'triggered', { targetPrice: 55.5, createdAt: 3 })
+    ]);
     const pop = await browser.newPage();
-    await pop.setViewport({ width: 360, height: 760 });
+    await pop.setViewport({ width: 360, height: 900 });
     await pop.goto(`chrome-extension://${extId}/src/popup/popup.html`);
-    await pop.waitForFunction(() => /Signed in/.test(document.getElementById('account-status').textContent), { timeout: 10000 });
-    assert.match(await pop.$eval('#account-hint', (el) => el.textContent), /june@example\.com · 1 active alert$/); // Best Buy alerts are not counted
+    await pop.waitForFunction(() => document.querySelectorAll('#alerts-list li').length === 3, { timeout: 10000 });
+    const rows = await pop.$$eval('#alerts-list li', (lis) => lis.map((li) => ({
+      title: li.querySelector('a').textContent,
+      href: li.querySelector('a').getAttribute('href'),
+      meta: [...li.querySelector('.alert-meta').children].map((c) => c.textContent).join(' | '),
+      rearm: Boolean(li.querySelector('button'))
+    })));
+    assert.deepEqual(rows.map((r) => r.title), ['Seeded B0AAAAAAA1', 'Seeded B0AAAAAAA2', 'Seeded B0AAAAAAA3']);
+    assert.equal(rows[0].meta, 'Target reached | hit $55.00, target $55.50 | Re-arm');
+    assert.equal(rows[1].meta, 'Alert on | at or below $80.00');
+    assert.equal(rows[2].meta, 'Paused | at or below $80.00');
+    assert.deepEqual(rows.map((r) => r.rearm), [true, false, false]);
+    assert.equal(rows[0].href, 'https://www.amazon.com/dp/B0AAAAAAA1');
+    assert.match(await pop.$eval('#alerts-status', (el) => el.textContent), /1 reached/);
+    assert.equal(await pop.$eval('#site-alerts', (a) => a.getAttribute('href')), 'https://xylm-306e6.web.app/alerts/');
+    await waitBadge(pop, '1');
+    await pop.screenshot({ path: path.join(shots, '08-popup-alerts.png') });
+
+    await pop.click('#alerts-list li button');
+    await pop.waitForFunction(() => !document.querySelector('#alerts-list li button'), { timeout: 10000 });
+    assert.equal((await stored()).find((a) => a.asin === 'B0AAAAAAA1').status, 'active');
+    await waitBadge(pop, '');
     await pop.close();
-    delete site.alerts.al_seed2;
-    delete site.alerts.al_bb;
     await page.bringToFront();
   });
 
-  await step('the website is only called from the service worker, with host permission and no CORS headers', async () => {
+  await step('search results show a bell on products with an alert and nothing on the others', async () => {
+    await opts.evaluate((list) => chrome.storage.local.set({ price_alerts: list }), [
+      seed('B0SEARCH01', 'active', { targetPrice: 40 }),
+      seed('B0SEARCH02', 'paused', { targetPrice: 99 })
+    ]);
+    const search = await browser.newPage();
+    await search.setViewport({ width: 1280, height: 1000 });
+    await search.goto(SEARCH, { waitUntil: 'load' });
+    await search.waitForFunction(
+      () => [...document.querySelectorAll('[data-price-oracle-chip]')].filter((h) => h.shadowRoot.querySelector('.pc-chip.BUY_NOW, .pc-chip.WAIT, .pc-chip.FAIR_PRICE')).length === 3 &&
+        document.querySelectorAll('[data-price-oracle-chip]')[0].shadowRoot.querySelector('.pc-bell'),
+      { timeout: 20000 }
+    );
+    const bells = await search.evaluate(() => [...document.querySelectorAll('[data-price-oracle-chip]')].map((h) => h.shadowRoot.querySelector('.pc-bell')?.textContent.trim() || null));
+    assert.deepEqual(bells, ['Alert $40.00', 'Alert paused', null]);
+    await search.evaluate(() => document.querySelectorAll('[data-price-oracle-chip]')[0].shadowRoot.querySelector('.pc-chip').click());
+    await search.waitForFunction(() => /Price alert on: you will be notified at or below \$40\.00/.test(document.querySelectorAll('[data-price-oracle-chip]')[0].shadowRoot.textContent), { timeout: 5000 });
+    await search.screenshot({ path: path.join(shots, '09-search-alert-bell.png'), clip: { x: 0, y: 0, width: 1100, height: 520 } });
+    assert.equal((await stored()).find((a) => a.asin === 'B0SEARCH01').status, 'active', 'seeing $49.99 does not fire a $40 alert');
+    await search.close();
+    await page.bringToFront();
+  });
+
+  await step('a search result price at or below the target fires the alert too', async () => {
+    await opts.evaluate((list) => chrome.storage.local.set({ price_alerts: list }), [seed('B0SEARCH02', 'active', { targetPrice: 150 })]);
+    await clearNotifications();
+    const search = await browser.newPage();
+    await search.setViewport({ width: 1280, height: 1000 });
+    await search.goto(SEARCH, { waitUntil: 'load' });
+    await waitBadge(opts, '1');
+    assert.equal((await stored())[0].status, 'triggered');
+    assert.equal((await stored())[0].triggeredPrice, 149.99);
+    assert.deepEqual(Object.keys(await notifications()), ['po-alert-B0SEARCH02']);
+    await search.close();
+    await clearNotifications();
+    await resetAlerts();
+    await page.bringToFront();
+  });
+
+  // ---- The PriceOracle website's alerts page ---------------------------------------------------------
+  const siteCards = (pg) => pg.$$eval('#price-oracle-extension-alerts [data-po-alert]', (els) => els.map((el) => ({
+    asin: el.getAttribute('data-po-alert'),
+    text: el.textContent.replace(/\s+/g, ' ').trim(),
+    status: el.querySelector('[data-po-status]').getAttribute('data-po-status'),
+    after: Boolean(document.querySelector('#site-list').compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
+  })));
+  const waitSiteCards = (pg, n) =>
+    pg.waitForFunction((count) => document.querySelectorAll('#price-oracle-extension-alerts [data-po-alert]').length === count, { timeout: 10000 }, n);
+  const siteOwn = (pg) => pg.$$eval('[data-site-alert]', (els) => els.map((el) => el.getAttribute('data-site-alert')));
+
+  await step('website /alerts/: the extension alerts appear after the alerts already there', async () => {
+    await opts.evaluate((list) => chrome.storage.local.set({ price_alerts: list }), [
+      seed('B0AAAAAAA2', 'active', { createdAt: 2, title: 'Echo Dot (5th Gen)' }),
+      seed('B0AAAAAAA1', 'triggered', { createdAt: 3, targetPrice: 55.5, triggeredPrice: 54.25, title: '<img src=x onerror="window.__xss=1"> Fire Stick' })
+    ]);
+    const site = await browser.newPage();
+    await site.setViewport({ width: 1100, height: 900 });
+    await site.goto(`${SITE}/alerts/`, { waitUntil: 'load' });
+    await waitSiteCards(site, 2);
+    assert.deepEqual(await siteOwn(site), ['demo-2', 'demo-1'], "the site's own alerts are untouched");
+    const cards = await siteCards(site);
+    assert.deepEqual(cards.map((c) => c.asin), ['B0AAAAAAA1', 'B0AAAAAAA2']);
+    assert.ok(cards.every((c) => c.after), 'extension alerts come after the existing list');
+    assert.match(cards[0].text, /target reached.*Set in extension.*Fire Stick.*Target: \$55\.50.*Reached at: \$54\.25.*Notify: Chrome and june@example\.com.*Re-arm/i);
+    assert.match(cards[1].text, /active.*Echo Dot \(5th Gen\).*Initial: \$100\.00.*Target: \$80\.00.*Last seen: \$100\.00 \(10 min ago\).*Pause/i);
+    assert.match(await site.$eval('#price-oracle-extension-alerts', (el) => el.firstElementChild.textContent), /Set in your PriceOracle extension \(2\)/);
+    assert.equal(await site.evaluate(() => window.__xss), undefined, 'titles are text, never markup');
+    assert.match(cards[0].text, /<img src=x/);
+    assert.equal(await site.$eval('#price-oracle-extension-alerts [data-po-alert] a', (a) => a.getAttribute('href')), 'https://www.amazon.com/dp/B0AAAAAAA1');
+    await site.screenshot({ path: path.join(shots, '10-website-alerts.png') });
+    await site.close();
+  });
+
+  await step('website /alerts/: pause, change target, re-arm and delete write to the extension, not the site', async () => {
+    const site = await browser.newPage();
+    await site.goto(`${SITE}/alerts/`, { waitUntil: 'load' });
+    await waitSiteCards(site, 2);
+    const act = (asin, action) => site.$eval(`[data-po-alert="${asin}"] [data-po-action="${action}"]`, (b) => b.click());
+    const status = async (asin) => (await stored()).find((a) => a.asin === asin);
+
+    await act('B0AAAAAAA2', 'toggle');
+    await site.waitForFunction(() => document.querySelector('[data-po-alert="B0AAAAAAA2"] [data-po-status]').getAttribute('data-po-status') === 'paused', { timeout: 5000 });
+    assert.equal((await status('B0AAAAAAA2')).status, 'paused');
+    await act('B0AAAAAAA2', 'toggle');
+    await site.waitForFunction(() => document.querySelector('[data-po-alert="B0AAAAAAA2"] [data-po-status]').getAttribute('data-po-status') === 'active', { timeout: 5000 });
+
+    await act('B0AAAAAAA2', 'edit');
+    await site.waitForSelector('[data-po-field="target"]');
+    await site.$eval('[data-po-field="target"]', (el) => { el.value = ''; });
+    await site.type('[data-po-field="target"]', '0');
+    await site.click('[data-po-action="save"]');
+    await site.waitForFunction(() => /above \$0/.test(document.querySelector('#price-oracle-extension-alerts [role="alert"]')?.textContent || ''), { timeout: 5000 });
+    await site.$eval('[data-po-field="target"]', (el) => { el.value = ''; });
+    await site.type('[data-po-field="target"]', '72.5');
+    await site.click('[data-po-action="save"]');
+    await site.waitForFunction(() => /Target: \$72\.50/.test(document.querySelector('[data-po-alert="B0AAAAAAA2"]')?.textContent || ''), { timeout: 5000 });
+    assert.equal((await status('B0AAAAAAA2')).targetPrice, 72.5);
+
+    await act('B0AAAAAAA1', 'toggle');
+    await site.waitForFunction(() => document.querySelector('[data-po-alert="B0AAAAAAA1"] [data-po-status]').getAttribute('data-po-status') === 'active', { timeout: 5000 });
+    assert.equal((await status('B0AAAAAAA1')).triggeredPrice, null);
+    await waitBadge(opts, '');
+
+    await act('B0AAAAAAA1', 'delete');
+    await waitSiteCards(site, 1);
+    assert.equal((await stored()).length, 1);
+    assert.deepEqual(await siteOwn(site), ['demo-2', 'demo-1']);
+
+    await site.$eval('[data-site-delete="demo-1"]', (b) => b.click()); // the site's own delete still works and keeps ours
+    await site.waitForFunction(() => document.querySelectorAll('[data-site-alert]').length === 1, { timeout: 5000 });
+    await waitSiteCards(site, 1);
+    assert.deepEqual(await siteOwn(site), ['demo-2']);
+    await site.close();
+  });
+
+  await step('website: alerts set in the extension appear live, in a client-side route change, and vanish with the last alert', async () => {
+    await resetAlerts();
+    const site = await browser.newPage();
+    await site.goto(`${SITE}/`, { waitUntil: 'load' });
+    assert.equal(await site.$('#price-oracle-extension-alerts'), null, 'not shown outside /alerts');
+    await send({ type: 'PO_ALERT_CREATE', payload: { asin: ASIN, title: 'Live headphones', currentPrice: 174.99, targetPrice: 120 } });
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.equal(await site.$('#price-oracle-extension-alerts'), null);
+    await site.click('#nav-alerts'); // single-page navigation: the page is not reloaded
+    await waitSiteCards(site, 1);
+    assert.match((await siteCards(site))[0].text, /Live headphones/);
+
+    await send({ type: 'PO_ALERT_CREATE', payload: { asin: 'B0LIVEADD1', title: 'Added later', currentPrice: 50, targetPrice: 30 } });
+    await waitSiteCards(site, 2);
+
+    await site.click('#nav-home');
+    await site.waitForFunction(() => !document.getElementById('price-oracle-extension-alerts'), { timeout: 5000 });
+    await site.click('#nav-alerts');
+    await waitSiteCards(site, 2);
+
+    await send({ type: 'PO_ALERT_REMOVE', payload: { alertId: 'po-B0LIVEADD1' } });
+    await send({ type: 'PO_ALERT_REMOVE', payload: { alertId: `po-${ASIN}` } });
+    await site.waitForFunction(() => !document.getElementById('price-oracle-extension-alerts'), { timeout: 5000 });
+    assert.deepEqual(await siteOwn(site), ['demo-2', 'demo-1']);
+    await site.close();
+  });
+
+  await step('the website is never called, and nothing about Google or Firebase remains', async () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
-    assert.ok(manifest.host_permissions.includes('https://xylm-306e6.web.app/*'));
-    const contentScripts = manifest.content_scripts.flatMap((c) => c.js).map((f) => fs.readFileSync(path.join(root, f), 'utf8')).join('\n');
-    assert.doesNotMatch(contentScripts, /xylm-306e6|fetch\(/);
-  });
-
-  await step('Sign out in Settings drops the tokens and the card asks to sign in again', async () => {
-    await opts.bringToFront();
-    await opts.click('#account-signout');
-    await opts.waitForFunction(() => /Not signed in/.test(document.getElementById('account-state').textContent), { timeout: 10000 });
-    assert.deepEqual(await opts.evaluate(() => chrome.storage.local.get('account_session')), {});
-    assert.equal(await opts.$eval('#account-signout', (el) => el.hidden), true);
-    await page.bringToFront();
-    await waitAlert(page, 'signed_out');
-    await opts.bringToFront();
-    await opts.click('#account-signin'); // leave the account signed in for the popup screenshot
-    await opts.waitForFunction(() => /Signed in as/.test(document.getElementById('account-state').textContent), { timeout: 20000 });
+    assert.ok(!manifest.host_permissions.some((h) => /xylm|googleapis|google\.com/.test(h)));
+    assert.ok(!manifest.permissions.includes('identity'));
+    const files = manifest.content_scripts.flatMap((c) => c.js).map((f) => fs.readFileSync(path.join(root, f), 'utf8')).join('\n');
+    assert.doesNotMatch(files, /fetch\(|XMLHttpRequest|sendBeacon/);
+    const worker = fs.readFileSync(path.join(root, 'src/background/alerts.js'), 'utf8') + fs.readFileSync(path.join(root, 'src/background/alerts-api.js'), 'utf8');
+    assert.doesNotMatch(worker, /fetch\(|xylm|firebase|identitytoolkit/i);
   });
 
   const popup = await browser.newPage();

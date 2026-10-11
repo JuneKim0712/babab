@@ -8,8 +8,8 @@
  *   - POST /v1/web/scrape, GET /v1/org/logs -> mock context.dev (host api.context.dev)
  *   - GET  /v1/prediction-markets/*     -> mock Gemini prediction markets (host api.gemini.com)
  *   - GET  /__control?marketsDown=1|0   -> make the mock Gemini markets fail (tests the offline fallback)
- *   - accounts.google.com, identitytoolkit.googleapis.com, securetoken.googleapis.com -> mock Google OAuth + Firebase Auth
- *   - xylm-306e6.web.app/api/*          -> mock PriceOracle website API (create-alert, my-alerts; docs/ALERTS_INTEGRATION.md)
+ *   - https://xylm-306e6.web.app/ and /alerts/ -> test-page/site-alerts.html, a small stand-in for the PriceOracle
+ *     website's alerts page (same <main> structure and a pre-existing alert) used to test the extension's content script
  *   - GET  /__stats                     -> request counters (used by tests/e2e.mjs)
  *
  * Launch Chrome so those hostnames resolve here:
@@ -30,14 +30,7 @@ const PORT = Number(process.env.PORT || 44391);
 const DEFAULT_KEY = 'ctxt_secret_7390b0f7f788470c85aa687254599803';
 
 export const stats = { extract: 0, extractAuthOk: 0, markets: 0, categories: 0, lastGeminiKeyHeader: null, marketsDown: false, lastExtractBody: null, contextStatus: 0,
-  site: {
-    alerts: {}, nextId: 1, creates: 0, updates: 0, deletes: 0, lists: 0,
-    lastCreate: null, lastUpdate: null, lastDelete: null, lastAuthorization: null, lastAuthParams: null,
-    signIns: 0, refreshes: 0, lastRedirectUri: null,
-    validTokens: new Set(), tokenCounter: 0, tokenTtl: 3600,
-    refuseLogin: false, idpFail: false, refreshRevoked: false, create422: false, createDelayMs: 0
-  } };
-
+  extractPrice: 174.99, extractByAsin: {} };
 
 function ensureCert() {
   const dir = path.join(os.tmpdir(), 'price-oracle-demo-cert');
@@ -64,138 +57,6 @@ const readBody = (req) => new Promise((resolve) => {
   req.on('end', () => resolve(data));
 });
 
-const b64url = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
-const fakeJwt = (claims) => `${b64url({ alg: 'RS256', typ: 'JWT' })}.${b64url(claims)}.sig`;
-const SITE_EMAIL = 'june@example.com';
-const GOOGLE_CLIENT = '754413445676-dsqaqjdq1r5mpla7or2mlgjkg4cnf97m.apps.googleusercontent.com';
-// Like the real site: JSON, and no CORS headers at all (the extension must call it from its service worker).
-const siteJson = (res, status, body) => {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(body));
-};
-
-function issueToken() {
-  const token = `fbid_${++stats.site.tokenCounter}`;
-  stats.site.validTokens.add(token);
-  return token;
-}
-
-/** Mock Google OAuth + Firebase Auth. Executable form of the sign-in part of docs/ALERTS_INTEGRATION.md. */
-async function handleGoogle(host, req, res, url) {
-  const site = stats.site;
-  if (host === 'accounts.google.com' && url.pathname === '/o/oauth2/v2/auth') {
-    const q = url.searchParams;
-    site.lastAuthParams = Object.fromEntries(q);
-    const redirect = q.get('redirect_uri') || '';
-    let target;
-    try {
-      target = new URL(redirect);
-    } catch {
-      res.writeHead(400);
-      return res.end('bad redirect_uri');
-    }
-    if (!target.hostname.endsWith('.chromiumapp.org') || q.get('client_id') !== GOOGLE_CLIENT || q.get('response_type') !== 'id_token' || !q.get('nonce')) {
-      res.writeHead(400);
-      return res.end('redirect_uri_mismatch / invalid_request');
-    }
-    site.signIns++;
-    site.lastRedirectUri = redirect;
-    const fragment = site.refuseLogin
-      ? new URLSearchParams({ error: 'access_denied', state: q.get('state') })
-      : new URLSearchParams({
-          id_token: fakeJwt({ iss: 'https://accounts.google.com', aud: GOOGLE_CLIENT, sub: 'g-1', email: SITE_EMAIL, name: 'June', nonce: q.get('nonce') }),
-          state: q.get('state')
-        });
-    res.writeHead(302, { Location: `${redirect}#${fragment}` });
-    return res.end();
-  }
-  if (host === 'identitytoolkit.googleapis.com' && url.pathname === '/v1/accounts:signInWithIdp') {
-    const body = JSON.parse((await readBody(req)) || '{}');
-    if (site.idpFail || !/id_token=/.test(body.postBody || '') || !/providerId=google\.com/.test(body.postBody || '')) {
-      return siteJson(res, 400, { error: { code: 400, message: 'INVALID_IDP_RESPONSE : Unable to parse Google id_token' } });
-    }
-    return siteJson(res, 200, {
-      idToken: issueToken(), refreshToken: 'rt_1', expiresIn: String(site.tokenTtl), email: SITE_EMAIL, displayName: 'June', localId: 'uid_june'
-    });
-  }
-  if (host === 'securetoken.googleapis.com' && url.pathname === '/v1/token') {
-    const form = new URLSearchParams(await readBody(req));
-    site.refreshes++;
-    if (site.refreshRevoked || form.get('grant_type') !== 'refresh_token' || form.get('refresh_token') !== 'rt_1') {
-      return siteJson(res, 400, { error: { code: 400, message: 'INVALID_REFRESH_TOKEN', status: 'INVALID_ARGUMENT' } });
-    }
-    return siteJson(res, 200, { id_token: issueToken(), refresh_token: 'rt_1', expires_in: String(site.tokenTtl), user_id: 'uid_june' });
-  }
-  return siteJson(res, 404, { error: 'not found' });
-}
-
-const publicAlert = (a) => {
-  const copy = { ...a };
-  for (const hidden of ['email', 'userId', 'lastNotifiedAt']) delete copy[hidden];
-  return copy;
-};
-
-/** Mock of the PriceOracle website API. Executable form of the alert part of docs/ALERTS_INTEGRATION.md. */
-async function handleSite(req, res, url) {
-  const site = stats.site;
-  if (!url.pathname.startsWith('/api/')) return siteJson(res, 404, { error: 'not found' });
-  const authorization = req.headers.authorization || '';
-  site.lastAuthorization = authorization;
-  const authed = authorization.startsWith('Bearer ') && site.validTokens.has(authorization.slice(7));
-
-  if (url.pathname === '/api/create-alert') {
-    if (req.method !== 'POST') return siteJson(res, 405, { error: 'Method not allowed' });
-    const body = JSON.parse((await readBody(req)) || '{}');
-    site.lastCreate = body;
-    site.creates++;
-    if (!body.email || !body.targetValue) return siteJson(res, 400, { error: 'email and targetValue are required' });
-    if (site.createDelayMs) await new Promise((r) => setTimeout(r, site.createDelayMs));
-    if (site.create422) return siteJson(res, 422, { error: 'Could not read a live price for this product. Nothing was saved.' });
-    const asin = (String(body.targetValue).match(/\/dp\/([A-Z0-9]{10})/) || [])[1] || String(body.targetValue);
-    const id = `al_${site.nextId++}`;
-    site.alerts[id] = {
-      id, email: String(body.email).toLowerCase(), userId: authed ? 'uid_june' : null, targetType: 'asin', targetValue: asin, retailer: 'amazon',
-      productTitle: 'Sonic Aura Wireless Noise Cancelling Over-Ear Headphones', currentPriceAtCreation: 174.99,
-      targetPrice: body.targetPrice ?? null, minDiscountPercent: null, triggerOnPredictedDrop: false,
-      initialProjection: { projectedMid: 190.66, deltaPercentMonth: 9, recommendation: 'BUY_NOW' }, status: 'active', createdAt: new Date().toISOString()
-    };
-    return siteJson(res, 200, { success: true, alertId: id, alert: site.alerts[id], notice: '' });
-  }
-
-  if (url.pathname === '/api/my-alerts') {
-    if (!authed) return siteJson(res, 401, { error: 'Sign in required' });
-    if (req.method === 'GET') {
-      site.lists++;
-      const alerts = Object.values(site.alerts).filter((a) => a.userId === 'uid_june').reverse().map(publicAlert);
-      return siteJson(res, 200, { success: true, alerts });
-    }
-    if (req.method === 'POST') {
-      const body = JSON.parse((await readBody(req)) || '{}');
-      const alert = site.alerts[body.alertId];
-      if (body.action === 'update') {
-        site.lastUpdate = body;
-        site.updates++;
-        if (!alert || alert.userId !== 'uid_june') return siteJson(res, 404, { error: 'Alert not found' });
-        if ('targetPrice' in body) alert.targetPrice = body.targetPrice;
-        if ('status' in body) {
-          if (body.status !== 'active' && body.status !== 'paused') return siteJson(res, 400, { error: 'Invalid status' });
-          alert.status = body.status;
-        }
-        return siteJson(res, 200, { success: true });
-      }
-      if (body.action === 'delete') {
-        site.lastDelete = body;
-        site.deletes++;
-        if (!alert || alert.userId !== 'uid_june') return siteJson(res, 404, { error: 'Alert not found' });
-        delete site.alerts[body.alertId];
-        return siteJson(res, 200, { success: true });
-      }
-      return siteJson(res, 400, { error: 'Unknown action' });
-    }
-  }
-  return siteJson(res, 404, { error: 'not found' });
-}
-
 export function createServer() {
   return https.createServer(ensureCert(), async (req, res) => {
     const host = (req.headers.host || '').split(':')[0];
@@ -203,8 +64,10 @@ export function createServer() {
 
     if (url.pathname === '/__stats') return json(res, 200, stats);
 
-    if (host === 'xylm-306e6.web.app') return handleSite(req, res, url);
-    if (['accounts.google.com', 'identitytoolkit.googleapis.com', 'securetoken.googleapis.com'].includes(host)) return handleGoogle(host, req, res, url);
+    if (host === 'xylm-306e6.web.app') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(fs.readFileSync(path.join(here, 'site-alerts.html')));
+    }
 
     if (host === 'api.context.dev' && url.pathname === '/v1/org/logs') {
       if (req.headers.authorization !== `Bearer ${process.env.EXPECTED_CONTEXT_KEY || DEFAULT_KEY}`) return json(res, 401, { error_code: 'NOT_FOUND' });
@@ -219,12 +82,14 @@ export function createServer() {
       const authOk = req.headers.authorization === `Bearer ${process.env.EXPECTED_CONTEXT_KEY || DEFAULT_KEY}`;
       if (authOk) stats.extractAuthOk++;
       else return json(res, 401, { error: 'invalid key' });
+      const scrapedAsin = (String(body.url).match(/\/dp\/([A-Z0-9]{10})/) || [])[1];
+      const livePrice = stats.extractByAsin[scrapedAsin] ?? stats.extractPrice;
       return json(res, 200, {
         url: body.url,
         json: {
           requested: true,
           success: true,
-          data: { title: 'Sonic Aura Headphones', category: 'Electronics > Headphones', currentPrice: 174.99, listPrice: 219, lowestPrice: 139, averagePrice: 189, rating: 4.4, reviewCount: 8412, boughtPastMonth: 3000 }
+          data: { title: 'Sonic Aura Headphones', category: 'Electronics > Headphones', currentPrice: livePrice, listPrice: 219, lowestPrice: 139, averagePrice: 189, rating: 4.4, reviewCount: 8412, boughtPastMonth: 3000 }
         },
         markdown: { requested: true, success: true, data: '# Sonic Aura Headphones\n4.4 out of 5 stars\n' },
         key_metadata: { credits_consumed: 5, credits_remaining: 994 }
@@ -233,6 +98,11 @@ export function createServer() {
 
     if (url.pathname === '/__control') {
       if (url.searchParams.has('marketsDown')) stats.marketsDown = url.searchParams.get('marketsDown') === '1';
+      if (url.searchParams.has('price')) {
+        const asin = url.searchParams.get('asin');
+        if (asin) stats.extractByAsin[asin] = Number(url.searchParams.get('price'));
+        else stats.extractPrice = Number(url.searchParams.get('price'));
+      }
       return json(res, 200, stats);
     }
 

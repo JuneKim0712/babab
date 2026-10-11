@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PriceOracle Alertant (test stand-in)</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; }
+  nav { padding: 12px 24px; background: #fff; border-bottom: 1px solid #e2e8f0; display: flex; gap: 16px; }
+  main { max-width: 72rem; margin: 0 auto; padding: 32px 16px; }
+  .mb-10 { margin-bottom: 40px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 20px; display: flex; justify-content: space-between; gap: 16px; }
+  .grid { display: grid; gap: 16px; }
+  .mt-8 { margin-top: 32px; }
+  .flex { display: flex; } .flex-1 { flex: 1; } .gap-4 { gap: 16px; } .gap-2 { gap: 8px; }
+  .space-x-2 > * + * { margin-left: 8px; } .flex-col { flex-direction: column; }
+  button, input { font: inherit; }
+</style>
+</head>
+<body>
+<nav><a id="nav-home" href="/">Home</a><a id="nav-alerts" href="/alerts/">Alerts</a></nav>
+<div id="root"></div>
+<script>
+  // Stand-in for the real Next.js page: client-side routing and its own alerts list (the extension must not touch it).
+  const root = document.getElementById('root');
+  const mine = [
+    { id: 'demo-2', title: 'Apple MacBook Air 13-inch (M3 Chip)', target: 849, status: 'active' },
+    { id: 'demo-1', title: 'Hair Pin Gold Minimalist Set (12-pack)', target: 11.5, status: 'active' }
+  ];
+  function render() {
+    const main = document.createElement('main');
+    if (location.pathname.startsWith('/alerts')) {
+      main.innerHTML = '<div class="mb-10"><p>Alert bar</p></div>' +
+        '<div class="card"><div><h1>My Price Alerts &amp; Watchlist</h1></div></div>' +
+        '<div class="grid" id="site-list" style="margin-top:16px">' +
+        mine.map((a) => '<div class="card" data-site-alert="' + a.id + '"><div class="flex-1"><h3>' + a.title + '</h3><span>Target: $' + a.target.toFixed(2) + '</span></div>' +
+          '<button type="button" data-site-delete="' + a.id + '">Delete</button></div>').join('') + '</div>';
+    } else {
+      main.innerHTML = '<div class="mb-10"><h1>PriceOracle home</h1></div><p>Landing page</p>';
+    }
+    root.replaceChildren(main);
+    main.querySelectorAll('[data-site-delete]').forEach((b) => b.addEventListener('click', () => {
+      const i = mine.findIndex((a) => a.id === b.dataset.siteDelete);
+      if (i >= 0) mine.splice(i, 1);
+      render();
+    }));
+  }
+  document.querySelectorAll('nav a').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    history.pushState({}, '', a.getAttribute('href'));
+    render();
+  }));
+  window.addEventListener('popstate', render);
+  render();
+</script>
+</body>
+</html>

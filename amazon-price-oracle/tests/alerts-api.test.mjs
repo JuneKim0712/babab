@@ -1,136 +1,206 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildCreateBody,
-  buildDeleteBody,
-  buildGoogleAuthUrl,
-  buildUpdateBody,
-  canRefresh,
-  decodeJwtPayload,
-  findAlertForAsin,
-  firebaseErrorMessage,
-  isTokenFresh,
+  MAX_ALERTS,
+  badgeFor,
+  dueForCheck,
+  findAlert,
+  isEmail,
+  mailtoUrl,
   normalizeAlert,
-  parseGoogleRedirect,
-  refreshSession,
-  sessionFromSignIn,
+  notificationText,
+  observePrice,
+  patchAlert,
+  removeAlertFrom,
+  sanitizeAlerts,
+  sortAlerts,
+  summarizeAlerts,
+  upsertAlert,
   validateTarget
 } from '../src/background/alerts-api.js';
 
-const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-const jwt = (claims) => `${b64({ alg: 'RS256' })}.${b64(claims)}.sig`;
-const CLIENT = 'client.apps.googleusercontent.com';
-const redirect = (idToken, state = 'st', extra = '') => `https://abc.chromiumapp.org/#id_token=${idToken}&state=${state}${extra}`;
+const NOW = 1_700_000_000_000;
+const make = (asin, extra = {}) => ({ asin, title: `Item ${asin}`, targetPrice: 50, status: 'active', createdAt: NOW, ...extra });
 
-test('decodeJwtPayload reads unicode claims and rejects garbage', () => {
-  assert.equal(decodeJwtPayload(jwt({ name: 'Zoë 김' })).name, 'Zoë 김');
-  assert.throws(() => decodeJwtPayload('nope'), /malformed/);
-  assert.throws(() => decodeJwtPayload('a.!!!.c'), /malformed/);
+test('validateTarget accepts money formats and rounds to cents', () => {
+  assert.equal(validateTarget('$49.999', 60), 50);
+  assert.equal(validateTarget(' 1,049.5 ', 2000), 1049.5);
+  assert.equal(validateTarget(12, 0), 12);
 });
 
-test('buildGoogleAuthUrl asks for an ID token with scopes, state, nonce and the account chooser', () => {
-  const url = new URL(buildGoogleAuthUrl({ clientId: CLIENT, redirectUri: 'https://abc.chromiumapp.org/', state: 's', nonce: 'n', loginHint: 'a@b.co' }));
-  assert.equal(url.origin + url.pathname, 'https://accounts.google.com/o/oauth2/v2/auth');
-  const p = Object.fromEntries(url.searchParams);
-  assert.deepEqual(p, {
-    client_id: CLIENT, response_type: 'id_token', redirect_uri: 'https://abc.chromiumapp.org/', scope: 'openid email profile',
-    state: 's', nonce: 'n', prompt: 'select_account', login_hint: 'a@b.co'
-  });
-  assert.equal(new URL(buildGoogleAuthUrl({ clientId: CLIENT, redirectUri: 'https://x/', state: 's', nonce: 'n' })).searchParams.has('login_hint'), false);
+test('validateTarget rejects empty, zero, negative, junk and targets at or above the price', () => {
+  for (const bad of ['', '0', '-3', 'abc', null, undefined, '0.001']) assert.throws(() => validateTarget(bad, 60), /above \$0/);
+  assert.throws(() => validateTarget('60', 60), /below the current price/);
+  assert.throws(() => validateTarget('61', 60), /below the current price/);
 });
 
-test('parseGoogleRedirect returns the token only when state, nonce and audience match', () => {
-  const ok = jwt({ nonce: 'n', aud: CLIENT, email: 'a@b.co' });
-  assert.equal(parseGoogleRedirect(redirect(ok), { state: 'st', nonce: 'n', clientId: CLIENT }), ok);
-  assert.throws(() => parseGoogleRedirect(redirect(ok, 'other'), { state: 'st', nonce: 'n', clientId: CLIENT }), /did not match/);
-  assert.throws(() => parseGoogleRedirect(redirect(jwt({ nonce: 'x', aud: CLIENT })), { state: 'st', nonce: 'n', clientId: CLIENT }), /did not match/);
-  assert.throws(() => parseGoogleRedirect(redirect(jwt({ nonce: 'n', aud: 'else' })), { state: 'st', nonce: 'n', clientId: CLIENT }), /different app/);
-  assert.throws(() => parseGoogleRedirect('https://abc.chromiumapp.org/#state=st', { state: 'st', nonce: 'n', clientId: CLIENT }), /ID token/);
-  assert.throws(() => parseGoogleRedirect('https://abc.chromiumapp.org/#error=access_denied&state=st', { state: 'st', nonce: 'n' }), /refused sign-in: access_denied/);
-  assert.throws(() => parseGoogleRedirect(undefined, { state: 'st', nonce: 'n' }), /cancelled/);
+test('normalizeAlert fills defaults and rejects unusable records', () => {
+  const alert = normalizeAlert({ asin: 'b0abc12345', targetPrice: '19.989', title: 'T' });
+  assert.equal(alert.asin, 'B0ABC12345');
+  assert.equal(alert.id, 'po-B0ABC12345');
+  assert.equal(alert.targetPrice, 19.99);
+  assert.equal(alert.status, 'active');
+  assert.equal(alert.lastPrice, null);
+  for (const bad of [null, 'x', {}, { asin: 'short', targetPrice: 5 }, { asin: 'B0ABC12345' }, { asin: 'B0ABC12345', targetPrice: 0 }]) {
+    assert.equal(normalizeAlert(bad), null);
+  }
+  assert.equal(normalizeAlert({ asin: 'B0ABC12345', targetPrice: 5, status: 'bogus' }).status, 'active');
+  assert.equal(normalizeAlert({ asin: 'B0ABC12345', targetPrice: 5, title: 'x'.repeat(500) }).title.length, 200);
 });
 
-test('firebaseErrorMessage keeps the error code only', () => {
-  assert.equal(firebaseErrorMessage({ error: { message: 'INVALID_IDP_RESPONSE : Unable to parse Google id_token' } }, 'x'), 'INVALID_IDP_RESPONSE');
-  assert.equal(firebaseErrorMessage({ error: { message: 'INVALID_REFRESH_TOKEN' } }, 'x'), 'INVALID_REFRESH_TOKEN');
-  assert.equal(firebaseErrorMessage(null, 'HTTP 500'), 'HTTP 500');
+test('sanitizeAlerts drops junk, keeps one alert per product and sorts newest first', () => {
+  const list = sanitizeAlerts([make('B000000001', { createdAt: 1 }), null, make('B000000002', { createdAt: 9 }), make('B000000001', { targetPrice: 99 }), 'x']);
+  assert.deepEqual(list.map((a) => a.asin), ['B000000002', 'B000000001']);
+  assert.equal(list[1].targetPrice, 50, 'the first record for a product wins');
+  assert.deepEqual(sanitizeAlerts(undefined), []);
 });
 
-test('sessionFromSignIn maps the Identity Toolkit response and falls back to token claims', () => {
-  const now = 1000;
-  assert.deepEqual(
-    sessionFromSignIn({ idToken: 'T', refreshToken: 'R', expiresIn: '3600', email: 'A@B.co', displayName: 'Ann', localId: 'u1' }, now),
-    { idToken: 'T', refreshToken: 'R', expiresAt: now + 3_600_000, email: 'a@b.co', name: 'Ann', uid: 'u1' }
-  );
-  const s = sessionFromSignIn({ idToken: jwt({ email: 'c@d.co', name: 'Cy', user_id: 'u2' }), refreshToken: 'R' }, now);
-  assert.equal(s.email, 'c@d.co');
-  assert.equal(s.uid, 'u2');
-  assert.equal(s.expiresAt, now + 3_600_000);
-  assert.throws(() => sessionFromSignIn({ idToken: 'T' }), /did not return a session/);
+test('upsertAlert creates, then re-aims the same alert instead of duplicating it', () => {
+  const first = upsertAlert([], { asin: 'b0abc12345', title: 'Echo Dot', targetPrice: '40', currentPrice: 55 }, NOW);
+  assert.equal(first.list.length, 1);
+  assert.equal(first.alert.priceAtCreation, 55);
+  assert.equal(first.alert.lastPrice, 55);
+  assert.equal(first.alert.createdAt, NOW);
+
+  const second = upsertAlert(first.list, { asin: 'B0ABC12345', targetPrice: '35', currentPrice: 54 }, NOW + 5);
+  assert.equal(second.list.length, 1);
+  assert.equal(second.alert.targetPrice, 35);
+  assert.equal(second.alert.priceAtCreation, 55, 'the original price is kept');
+  assert.equal(second.alert.title, 'Echo Dot');
+  assert.equal(second.alert.createdAt, NOW);
 });
 
-test('refreshSession swaps tokens, keeps identity, and tolerates a missing refresh token', () => {
-  const session = { idToken: 'old', refreshToken: 'R', expiresAt: 1, email: 'a@b.co', name: 'A', uid: 'u' };
-  assert.deepEqual(refreshSession(session, { id_token: 'new', refresh_token: 'R2', expires_in: '1800' }, 10), {
-    ...session, idToken: 'new', refreshToken: 'R2', expiresAt: 10 + 1_800_000
-  });
-  assert.equal(refreshSession(session, { id_token: 'new' }, 0).refreshToken, 'R');
-  assert.throws(() => refreshSession(session, {}), /refreshed token/);
+test('upsertAlert re-arms a fired alert and validates input', () => {
+  const fired = [make('B0ABC12345', { status: 'triggered', triggeredAt: NOW, triggeredPrice: 45 })];
+  const { alert } = upsertAlert(fired, { asin: 'B0ABC12345', targetPrice: 40, currentPrice: 60 });
+  assert.equal(alert.status, 'active');
+  assert.equal(alert.triggeredAt, null);
+  assert.throws(() => upsertAlert([], { asin: 'B0ABC12345', targetPrice: 70, currentPrice: 60 }), /below the current price/);
+  assert.throws(() => upsertAlert([], { asin: 'nope', targetPrice: 5, currentPrice: 60 }), /Invalid ASIN/);
 });
 
-test('isTokenFresh refreshes ahead of expiry; canRefresh needs a refresh token', () => {
-  const s = { idToken: 'T', expiresAt: 10_000 };
-  assert.equal(isTokenFresh(s, 2_000, 7_999), true);
-  assert.equal(isTokenFresh(s, 2_000, 8_000), false);
-  assert.equal(isTokenFresh({ expiresAt: 10_000 }, 0, 1), false);
-  assert.equal(canRefresh({ refreshToken: 'R' }), true);
-  assert.equal(canRefresh({ email: 'a', expired: true }), false);
+test('upsertAlert refuses to grow past the cap but still edits an existing alert', () => {
+  const full = Array.from({ length: MAX_ALERTS }, (_, i) => make(`B${String(i).padStart(9, '0')}`, { createdAt: i + 1 }));
+  assert.throws(() => upsertAlert(full, { asin: 'ZZZZZZZZZZ', targetPrice: 5, currentPrice: 60 }), /up to 200/);
+  const { list } = upsertAlert(full, { asin: full[3].asin, targetPrice: 5, currentPrice: 60 });
+  assert.equal(list.length, MAX_ALERTS);
 });
 
-test('validateTarget accepts money-ish input, rounds to cents and insists on a price below today', () => {
-  assert.equal(validateTarget('149.999', 200), 150);
-  assert.equal(validateTarget('$1,049.5', 2000), 1049.5);
-  assert.equal(validateTarget(99, 100), 99);
-  assert.throws(() => validateTarget('100', 100), /below the current price/);
-  assert.throws(() => validateTarget('150', 100), /below the current price/);
-  for (const bad of ['', 'abc', '0', '-5', '0.001', null, undefined, NaN]) assert.throws(() => validateTarget(bad, 100), /above \$0/, String(bad));
-  assert.equal(validateTarget('150', 0), 150);
+test('patchAlert pauses, re-arms and re-targets', () => {
+  const list = sanitizeAlerts([make('B0ABC12345', { status: 'triggered', triggeredAt: NOW, triggeredPrice: 44 })]);
+  const id = list[0].id;
+  const rearmed = patchAlert(list, id, { status: 'active' });
+  assert.equal(rearmed.alert.status, 'active');
+  assert.equal(rearmed.alert.triggeredPrice, null);
+
+  const paused = patchAlert(rearmed.list, id, { status: 'paused' });
+  assert.equal(paused.alert.status, 'paused');
+
+  const retargeted = patchAlert(list, id, { targetPrice: '30', toggleOnly: true });
+  assert.equal(retargeted.alert.targetPrice, 30);
+  assert.equal(retargeted.alert.status, 'active', 'a new target re-arms a fired alert');
+
+  assert.throws(() => patchAlert(list, id, { targetPrice: '90', currentPrice: 60 }), /below the current price/);
+  assert.throws(() => patchAlert(list, id, { status: 'triggered' }), /status must be/);
+  assert.throws(() => patchAlert(list, 'po-GONE', { status: 'active' }), /no longer exists/);
 });
 
-test('request bodies match docs/ALERTS_INTEGRATION.md', () => {
-  assert.deepEqual(buildCreateBody({ email: 'a@b.co', asin: 'B0CX23V258', targetPrice: 150 }), {
-    email: 'a@b.co', targetType: 'asin', targetValue: 'https://www.amazon.com/dp/B0CX23V258', targetPrice: 150
-  });
-  assert.deepEqual(buildUpdateBody({ alertId: 'x', targetPrice: 99.5 }), { action: 'update', alertId: 'x', targetPrice: 99.5 });
-  assert.deepEqual(buildUpdateBody({ alertId: 'x', status: 'paused' }), { action: 'update', alertId: 'x', status: 'paused' });
-  assert.deepEqual(buildUpdateBody({ alertId: 'x', status: 'active', targetPrice: 5 }), { action: 'update', alertId: 'x', targetPrice: 5, status: 'active' });
-  assert.throws(() => buildUpdateBody({ alertId: 'x', status: 'triggered' }), /active.*paused/);
-  assert.deepEqual(buildDeleteBody('x'), { action: 'delete', alertId: 'x' });
+test('removeAlertFrom removes only that alert', () => {
+  const list = sanitizeAlerts([make('B000000001'), make('B000000002')]);
+  assert.deepEqual(removeAlertFrom(list, 'po-B000000001').map((a) => a.asin), ['B000000002']);
+  assert.equal(removeAlertFrom(list, 'po-nothing').length, 2);
 });
 
-test('normalizeAlert reads the website document and is defensive', () => {
-  const raw = { id: 'a1', targetType: 'asin', targetValue: 'b0cx23v258', retailer: 'amazon', productTitle: 'T', currentPriceAtCreation: 174.99, targetPrice: '150', status: 'triggered' };
-  assert.deepEqual(normalizeAlert(raw), {
-    id: 'a1', asin: 'B0CX23V258', targetType: 'asin', retailer: 'amazon', targetPrice: 150, status: 'triggered', title: 'T', priceAtCreation: 174.99
-  });
-  const bare = normalizeAlert({ alertId: 'a2', targetType: 'asin', targetValue: 'B0CX23V258', targetPrice: null });
-  assert.equal(bare.id, 'a2');
-  assert.equal(bare.targetPrice, null);
-  assert.equal(bare.status, 'active');
-  assert.equal(bare.retailer, 'amazon'); // old documents have no retailer: Amazon
-  assert.equal(normalizeAlert({ id: 'x', targetValue: 'B0CX23V258', status: 'weird' }).status, 'active');
-  for (const bad of [null, undefined, 'x', {}, { id: 'x' }, { targetValue: 'B0CX23V258' }]) assert.equal(normalizeAlert(bad), null);
+test('observePrice fires once when the price reaches the target', () => {
+  const list = sanitizeAlerts([make('B0ABC12345', { targetPrice: 50 })]);
+
+  const above = observePrice(list, 'B0ABC12345', 52, NOW);
+  assert.equal(above.fired, null);
+  assert.equal(above.list[0].lastPrice, 52);
+  assert.equal(above.list[0].lastCheckedAt, NOW);
+  assert.equal(above.list[0].status, 'active');
+
+  const hit = observePrice(above.list, 'b0abc12345', 49.5, NOW + 1);
+  assert.equal(hit.fired.asin, 'B0ABC12345');
+  assert.equal(hit.list[0].status, 'triggered');
+  assert.equal(hit.list[0].triggeredPrice, 49.5);
+
+  const again = observePrice(hit.list, 'B0ABC12345', 40, NOW + 2);
+  assert.equal(again.fired, null, 'it does not fire twice');
+  assert.equal(again.list[0].triggeredPrice, 49.5);
+  assert.equal(again.list[0].lastPrice, 40);
 });
 
-test('findAlertForAsin picks the newest Amazon product alert and ignores Best Buy and category alerts', () => {
-  const list = [
-    { id: 'bb', targetType: 'sku', retailer: 'bestbuy', targetValue: 'B0CX23V258', status: 'active' },
-    { id: 'cat', targetType: 'category', retailer: null, targetValue: 'B0CX23V258', status: 'active' },
-    { id: 'new', targetType: 'asin', retailer: 'amazon', targetValue: 'B0CX23V258', status: 'paused' },
-    { id: 'old', targetType: 'asin', targetValue: 'B0CX23V258', status: 'active' },
-    { id: 'other', targetType: 'asin', retailer: 'amazon', targetValue: 'B0OTHER000', status: 'active' }
-  ];
-  assert.equal(findAlertForAsin(list, 'b0cx23v258').id, 'new');
-  assert.equal(findAlertForAsin(list, 'B0NOPE0000'), null);
-  assert.equal(findAlertForAsin(undefined, 'B0CX23V258'), null);
+test('observePrice fires on a price exactly equal to the target and ignores paused alerts and bad prices', () => {
+  const list = sanitizeAlerts([make('B0ABC12345', { targetPrice: 50 }), make('B0ABC12346', { targetPrice: 50, status: 'paused' })]);
+  assert.ok(observePrice(list, 'B0ABC12345', 50).fired);
+  assert.equal(observePrice(list, 'B0ABC12346', 10).fired, null);
+  assert.equal(observePrice(list, 'B0ABC12346', 10).list.find((a) => a.asin === 'B0ABC12346').status, 'paused');
+  for (const bad of [0, -1, NaN, null, undefined, 'abc']) {
+    const result = observePrice(list, 'B0ABC12345', bad);
+    assert.equal(result.changed, false);
+    assert.equal(result.list, list);
+  }
+  assert.equal(observePrice(list, 'B0UNKNOWN0', 5).changed, false);
+});
+
+test('dueForCheck picks stale active alerts, least recently checked first, up to the limit', () => {
+  const HOUR = 3600_000;
+  const list = sanitizeAlerts([
+    make('B000000001', { lastCheckedAt: NOW - 5 * HOUR }),
+    make('B000000002', { lastCheckedAt: NOW - 1 * HOUR }),
+    make('B000000003', { lastCheckedAt: null }),
+    make('B000000004', { lastCheckedAt: NOW - 9 * HOUR }),
+    make('B000000005', { lastCheckedAt: NOW - 9 * HOUR, status: 'paused' }),
+    make('B000000006', { lastCheckedAt: NOW - 9 * HOUR, status: 'triggered' })
+  ]);
+  assert.deepEqual(dueForCheck(list, NOW, 4 * HOUR, 5).map((a) => a.asin), ['B000000003', 'B000000004', 'B000000001']);
+  assert.deepEqual(dueForCheck(list, NOW, 4 * HOUR, 2).map((a) => a.asin), ['B000000003', 'B000000004']);
+});
+
+test('findAlert is case-insensitive', () => {
+  const list = sanitizeAlerts([make('B0ABC12345')]);
+  assert.equal(findAlert(list, 'b0abc12345').asin, 'B0ABC12345');
+  assert.equal(findAlert(list, 'B000000000'), null);
+});
+
+test('sortAlerts puts fired alerts first and is stable; summarizeAlerts counts', () => {
+  const list = sanitizeAlerts([
+    make('B000000001', { createdAt: 4, status: 'paused' }),
+    make('B000000002', { createdAt: 3 }),
+    make('B000000003', { createdAt: 2, status: 'triggered' }),
+    make('B000000004', { createdAt: 1 })
+  ]);
+  assert.deepEqual(sortAlerts(list).map((a) => a.asin), ['B000000003', 'B000000002', 'B000000004', 'B000000001']);
+  assert.deepEqual(summarizeAlerts(list), { total: 4, active: 2, paused: 1, triggered: 1 });
+});
+
+test('badgeFor counts alerts that reached their target', () => {
+  assert.deepEqual(badgeFor({ total: 0, active: 0, paused: 0, triggered: 0 }), { text: '', title: 'PriceOracle' });
+  assert.match(badgeFor({ total: 2, active: 2, paused: 0, triggered: 0 }).title, /watching 2 price alerts/);
+  assert.match(badgeFor({ total: 1, active: 1, paused: 0, triggered: 0 }).title, /watching 1 price alert$/);
+  assert.equal(badgeFor({ total: 3, active: 1, paused: 0, triggered: 2 }).text, '2');
+  assert.equal(badgeFor({ total: 150, active: 0, paused: 0, triggered: 150 }).text, '99+');
+});
+
+test('notificationText names the item, the price and the target', () => {
+  const alert = normalizeAlert({ asin: 'B0ABC12345', title: 'Echo Dot', targetPrice: 40, status: 'triggered', triggeredPrice: 38.5 });
+  const { title, message } = notificationText(alert);
+  assert.equal(title, 'Price target reached');
+  assert.equal(message, 'Echo Dot is $38.50, at or below your $40.00 target.');
+  assert.match(notificationText({ ...alert, title: '' }).message, /^Amazon item B0ABC12345 is/);
+  assert.ok(notificationText({ ...alert, title: 'x'.repeat(300) }).message.length < 160);
+});
+
+test('isEmail and mailtoUrl', () => {
+  assert.ok(isEmail('me@example.com'));
+  assert.ok(isEmail(' me+deals@mail.example.co '));
+  for (const bad of ['', 'me', 'me@', '@example.com', 'a b@example.com', 'me@example', null]) assert.equal(isEmail(bad), false);
+
+  const alert = normalizeAlert({ asin: 'B0ABC12345', title: 'Echo & Dot', targetPrice: 40, status: 'triggered', triggeredPrice: 38 });
+  const url = mailtoUrl('me@example.com', alert);
+  assert.ok(url.startsWith('mailto:me@example.com?subject='));
+  const body = new URLSearchParams(url.split('?')[1]).get('body');
+  assert.match(body, /Echo & Dot is \$38\.00/);
+  assert.match(body, /https:\/\/www\.amazon\.com\/dp\/B0ABC12345/);
 });
