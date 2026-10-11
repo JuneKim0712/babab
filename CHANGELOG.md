@@ -5,6 +5,14 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.3.1 - Performance and accessibility
+
+- Price history no longer rewrites its storage blob when a product is revisited with an unchanged price. A
+  search page of 60 cards used to trigger 60 full writes; now only genuinely new observations write.
+- The product card is a labelled `region` and exposes `aria-busy` while loading, so screen readers announce
+  it and its state.
+- New tests for both.
+
 ## 1.3.0 - Local price history
 
 - PriceOracle now remembers the prices it has seen per product (product pages and search cards) in

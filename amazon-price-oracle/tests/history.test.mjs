@@ -82,3 +82,21 @@ test('clearPriceHistory removes everything', async () => {
   await clearPriceHistory();
   assert.equal(await countTrackedProducts(), 0);
 });
+
+test('revisiting an unchanged product does not write to storage again', async () => {
+  const store = stubChrome();
+  let sets = 0;
+  const realSet = chrome.storage.local.set;
+  chrome.storage.local.set = async (o) => {
+    sets++;
+    return realSet(o);
+  };
+  await recordPrice('B0NOOP0001', 10, T0);
+  assert.equal(sets, 1);
+  const again = await recordPrice('B0NOOP0001', 10, T0 + 3600e3);
+  assert.equal(sets, 1);
+  assert.equal(again.count, 1);
+  await recordPrice('B0NOOP0001', 11, T0 + 3600e3);
+  assert.equal(sets, 2);
+  assert.equal(store.price_history.B0NOOP0001.length, 2);
+});

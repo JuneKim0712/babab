@@ -74,6 +74,10 @@ export function historySignals(summary) {
 
 let writes = Promise.resolve();
 
+function isSame(a, b) {
+  return a.length === b.length && a.every(([t, p], i) => t === b[i][0] && p === b[i][1]);
+}
+
 /**
  * Record a price and return the summary including it.
  * @param {string} asin
@@ -83,7 +87,10 @@ let writes = Promise.resolve();
 export function recordPrice(asin, price, now = Date.now()) {
   const job = writes.then(async () => {
     const all = (await chrome.storage.local.get(STORAGE_KEYS.PRICE_HISTORY))[STORAGE_KEYS.PRICE_HISTORY] || {};
-    const points = addObservation(all[asin] || [], price, now);
+    const before = all[asin] || [];
+    const points = addObservation(before, price, now);
+    // Revisiting an unchanged product (every search page does) must not rewrite the whole log.
+    if (isSame(before, points)) return summarize(points, now);
     all[asin] = points;
     const asins = Object.keys(all);
     if (asins.length > MAX_ASINS) {

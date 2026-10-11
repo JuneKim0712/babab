@@ -85,3 +85,8 @@ test('price history row appears only when history exists, in card and chip', () 
   withHistory.meta.history.spanDays = 0.2;
   assert.match(Widget.render({ status: 'ready', data: withHistory }), /Seen 4 times · low/);
 });
+
+test('the card is a labelled region and exposes its busy state', () => {
+  assert.match(Widget.render({ status: 'loading' }), /role="region"[^>]*aria-busy="true"/);
+  assert.match(Widget.render({ status: 'ready', data: sample() }), /aria-busy="false"/);
+});

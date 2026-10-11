@@ -286,7 +286,7 @@
 
   /** Full shadow-root markup including styles. */
   function render(state) {
-    return `<style>${STYLES}</style><div class="po-wrap"><div class="po-card">${renderCard(state)}</div></div>`;
+    return `<style>${STYLES}</style><div class="po-wrap"><div class="po-card" role="region" aria-label="PriceOracle buy timing and 30-day price projection" aria-busy="${state.status === 'loading'}">${renderCard(state)}</div></div>`;
   }
 
   // -------------------------------------------------------------------------
