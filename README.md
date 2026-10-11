@@ -13,6 +13,8 @@ RECOMMENDATION   [ WAIT — Expected to drop 8.4% (~$14.70) in 30 days ]  (82% c
 🔑 Gemini Status: Gemini Markets: Live — Fed hike odds 19%, cut odds 3% · recession odds 4%
 ```
 
+**Just want to use it?** Follow the step-by-step [User guide](docs/USER_GUIDE.md) (install, reading the card, settings, update, uninstall, troubleshooting).
+
 - [Install](#install-30-seconds)
 - [Purpose and scope](#purpose-and-scope)
 - [Architecture](#architecture)
@@ -113,6 +115,7 @@ Key properties:
 .
 ├── README.md                     This file (single source of truth for collaborators)
 ├── AGENTS.md                     Short rules for AI/code agents; points here
+├── docs/USER_GUIDE.md            End-user guide for installing and using the extension (+ docs/images)
 ├── PriceOracle.zip               Ready-to-install build of the extension (regenerate with npm run pack)
 ├── .github/workflows/            CI (unit tests) and tag-triggered release (attaches PriceOracle.zip)
 └── amazon-price-oracle/          The extension (this folder is what "Load unpacked" loads)
