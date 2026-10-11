@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Mock Amazon.com: Wireless Noise Cancelling Headphones</title>
+  <style>
+    /* Intentionally aggressive "Amazon-like" CSS to prove the widget is isolated by Shadow DOM. */
+    body { font-family: Arial, sans-serif; margin: 0; background: #fff; color: #0f1111; }
+    div, span, button, a, strong { color: #c40000 !important; font-size: 19px !important; letter-spacing: 3px !important; }
+    #dp-container { max-width: 1100px; margin: 0 auto; padding: 20px; display: flex; gap: 24px; }
+    #centerCol { flex: 1; min-width: 0; }
+    #rightCol { width: 280px; }
+    #productTitle { font-size: 24px !important; color: #0f1111 !important; letter-spacing: 0 !important; }
+    .a-price { display: inline-block; }
+    .a-offscreen { position: absolute; left: -10000px; }
+    .a-price-whole { font-size: 28px !important; }
+    .a-text-price { text-decoration: line-through; }
+    #buybox { border: 1px solid #d5d9d9; border-radius: 8px; padding: 14px; }
+    .variants button { margin-right: 8px; padding: 6px 12px; cursor: pointer; }
+    #wayfinding-breadcrumbs_feature_div ul { list-style: none; display: flex; gap: 8px; padding: 0; }
+  </style>
+</head>
+<body>
+  <div id="dp">
+    <div id="dp-container">
+      <div id="ppd">
+        <div id="centerCol">
+          <div id="wayfinding-breadcrumbs_feature_div">
+            <ul><li><span class="a-list-item"><a href="#">Electronics</a></span></li><li><span>›</span></li><li><span class="a-list-item"><a href="#">Headphones</a></span></li></ul>
+          </div>
+          <h1><span id="productTitle">Sonic Aura Wireless Noise Cancelling Over-Ear Headphones</span></h1>
+          <div class="variants">
+            <span>Color:</span>
+            <button type="button" data-asin="B0CX23V258" data-price="174.99" data-list="219.00">Black</button>
+            <button type="button" data-asin="B0CX23V259" data-price="239.00" data-list="239.00">Silver</button>
+            <button type="button" data-asin="B0CX23V260" data-price="129.50" data-list="219.00">Blue</button>
+          </div>
+          <div id="corePriceDisplay_desktop_feature_div">
+            <div class="a-section">
+              <span class="a-price priceToPay"><span class="a-offscreen" id="mock-price">$174.99</span><span aria-hidden="true"><span class="a-price-symbol">$</span><span class="a-price-whole">174<span class="a-price-decimal">.</span></span><span class="a-price-fraction">99</span></span></span>
+              <span class="basisPrice">List: <span class="a-price a-text-price"><span class="a-offscreen" id="mock-list">$219.00</span></span></span>
+            </div>
+          </div>
+          <p>Over-ear, 40-hour battery, adaptive noise cancelling.</p>
+        </div>
+        <div id="rightCol">
+          <div id="buybox"><div>Buy new</div><button type="button">Add to Cart</button></div>
+        </div>
+      </div>
+    </div>
+    <input type="hidden" id="ASIN" value="B0CX23V258" />
+  </div>
+
+  <script>
+    document.querySelectorAll('.variants button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        // Simulate Amazon's async variant swap: ASIN input and price blocks change a moment later.
+        setTimeout(() => {
+          const price = Number(btn.dataset.price);
+          document.getElementById('ASIN').value = btn.dataset.asin;
+          document.getElementById('mock-price').textContent = '$' + price.toFixed(2);
+          document.getElementById('mock-list').textContent = '$' + Number(btn.dataset.list).toFixed(2);
+          history.replaceState(null, '', '/dp/' + btn.dataset.asin);
+        }, 150);
+      });
+    });
+  </script>
+</body>
+</html>

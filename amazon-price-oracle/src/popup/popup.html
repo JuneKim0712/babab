@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PriceOracle</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main class="popup">
+    <header class="top">
+      <div class="brand"><span class="bolt" aria-hidden="true">⚡</span> PriceOracle</div>
+      <button id="open-options" class="icon-btn" type="button" title="Open settings" aria-label="Open settings">⚙</button>
+    </header>
+
+    <section class="card" aria-labelledby="last-title">
+      <h2 id="last-title" class="label">Last analyzed product</h2>
+      <div id="last-empty" class="empty" hidden>
+        Open an Amazon product page (for example <code>amazon.com/dp/B0CX23V258</code>) and the timing widget will appear under the price.
+      </div>
+      <div id="last-body" hidden>
+        <div id="last-product" class="product-title"></div>
+        <div class="reco-row">
+          <span id="last-pill" class="pill"></span>
+          <span id="last-confidence" class="muted"></span>
+        </div>
+        <div class="kv"><span>Current</span><strong id="last-current"></strong></div>
+        <div class="kv"><span>30-day expected</span><strong id="last-mid"></strong></div>
+        <div class="kv"><span>30-day delta</span><strong id="last-delta"></strong></div>
+        <div id="last-when" class="muted small"></div>
+      </div>
+    </section>
+
+    <section class="stats" aria-label="Quick stats">
+      <div class="stat"><strong id="stat-count">0</strong><span>Analyses</span></div>
+      <div class="stat"><strong id="stat-cache">0</strong><span>Cached ASINs</span></div>
+    </section>
+
+    <section class="card" aria-labelledby="keys-title">
+      <h2 id="keys-title" class="label">API key status</h2>
+      <div class="key-row">
+        <span>context.dev</span>
+        <span id="ctx-status" class="badge"></span>
+      </div>
+      <div class="key-row">
+        <span>Gemini</span>
+        <span id="gem-status" class="badge"></span>
+      </div>
+      <p id="gem-hint" class="muted small"></p>
+      <div class="actions">
+        <button id="add-gemini" class="btn primary" type="button">Add Gemini key</button>
+        <button id="clear-cache" class="btn" type="button">Clear cache</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+    <div class="modal-card">
+      <h2 id="modal-title">Gemini API key</h2>
+      <p class="muted small">Stored only in this browser (<code>chrome.storage.local</code>). Leave empty to keep using the built-in heuristic model.</p>
+      <label for="gemini-input" class="label">API key</label>
+      <input id="gemini-input" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" />
+      <div id="modal-msg" class="msg" role="status" hidden></div>
+      <div class="actions end">
+        <button id="modal-cancel" class="btn" type="button">Cancel</button>
+        <button id="modal-save" class="btn primary" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

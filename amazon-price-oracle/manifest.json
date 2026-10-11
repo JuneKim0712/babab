@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "PriceOracle — Amazon Buy Timing & Price Projection",
+  "short_name": "PriceOracle",
+  "version": "1.0.0",
+  "description": "Injects a Buy Timing & 30-day Price Projection widget on Amazon product pages: WAIT, BUY NOW or FAIR PRICE with 5-tier price quantiles.",
+  "minimum_chrome_version": "109",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://api.context.dev/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.amazon.com/*", "https://amazon.com/*"],
+      "js": [
+        "src/content/amazon-parser.js",
+        "src/content/widget-template.js",
+        "src/content/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "PriceOracle",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  }
+}

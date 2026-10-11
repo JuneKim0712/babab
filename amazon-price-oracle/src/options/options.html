@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PriceOracle Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main class="page">
+    <header>
+      <h1><span aria-hidden="true">⚡</span> PriceOracle settings</h1>
+      <p class="lead">Keys are stored locally in <code>chrome.storage.local</code> and only ever sent to their own API from the extension's background service worker.</p>
+    </header>
+
+    <div id="banner" class="banner" role="status" hidden></div>
+
+    <form id="form" autocomplete="off">
+      <section class="panel">
+        <h2>context.dev API key</h2>
+        <p class="help">Used to extract pricing signals from the Amazon product page. A working default key is pre-filled; replace it with your own any time. Responses are cached for 24 hours per ASIN to save credits.</p>
+        <label for="context-key">API key</label>
+        <div class="field">
+          <input id="context-key" type="password" spellcheck="false" autocomplete="off" />
+          <button type="button" class="btn ghost" data-toggle="context-key">Show</button>
+          <button type="button" id="reset-context" class="btn ghost">Reset to default</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Gemini API key <span class="tag">optional</span></h2>
+        <p class="help">Enables live market-sentiment and discount-probability forecasts from Gemini. Without it PriceOracle runs in <strong>Prediction Simulation Mode</strong> (historical-volatility and seasonal-discount heuristics), so everything works immediately. Get a key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>.</p>
+        <label for="gemini-key">API key</label>
+        <div class="field">
+          <input id="gemini-key" type="password" spellcheck="false" autocomplete="off" placeholder="AIza…" />
+          <button type="button" class="btn ghost" data-toggle="gemini-key">Show</button>
+          <button type="button" id="clear-gemini" class="btn ghost">Remove</button>
+        </div>
+        <p id="gemini-state" class="state"></p>
+      </section>
+
+      <div class="actions">
+        <button type="submit" id="save" class="btn primary">Save</button>
+        <button type="button" id="test" class="btn">Test Connection</button>
+      </div>
+    </form>
+
+    <section id="results" class="panel results" hidden aria-live="polite">
+      <h2>Connection test</h2>
+      <ul>
+        <li><span class="dot" id="dot-context"></span><strong>context.dev</strong> <span id="res-context"></span></li>
+        <li><span class="dot" id="dot-gemini"></span><strong>Gemini</strong> <span id="res-gemini"></span></li>
+      </ul>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>
