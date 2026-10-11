@@ -5,6 +5,18 @@ the 5-tier 30-day projection (formulas in the README), the WAIT / BUY NOW / FAIR
 (-4% / +4%), the Shadow DOM card on product pages, the context.dev + Gemini markets inputs, and the
 heuristic fallback.
 
+## 1.4.4 - Property-based tests for the engine
+
+- `tests/properties.test.mjs`: about 25,000 seeded pseudo-random cases (deterministic, reproducible) check the
+  invariants the UI depends on: the five tiers always ascend and stay finite and positive (prices from one
+  cent to a million dollars, wild volatility, drift and sentiment inputs); zero-drift output equals the spec
+  formulas to the cent; the recommendation follows the -4% / +4% thresholds exactly (including the boundary
+  values); confidence is an integer within 40-82 (heuristic) or 40-88 (live markets); volatility stays within
+  4-35%; the heuristic model is bounded, deterministic and gives a sane projection for any product and date;
+  the seasonal calendar behaves for every day of the year.
+- Mutation check: removing the tier-ordering guard makes these tests fail, so they do guard the behaviour.
+- No production code changed; no bugs were found.
+
 ## 1.4.3 - Linting
 
 - ESLint (flat config, `npm run lint`) with separate rules for service-worker/page modules, classic content

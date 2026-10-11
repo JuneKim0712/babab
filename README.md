@@ -163,6 +163,7 @@ Key properties:
 | `package.json` | Scripts: `lint` (ESLint), `test` (unit), `e2e`, `pack`, `icons`, `demo`. Dev dependencies: `puppeteer-core` (e2e), `jsdom` (parser tests) and `eslint` (lint). |
 | `scripts/pack.mjs` | Builds `../PriceOracle.zip` (manifest, icons, src only) with a dependency-free, deterministic zip writer. |
 | `scripts/generate-icons.js` | Generates the PNG icons with a zero-dependency rasteriser. |
+| `tests/properties.test.mjs` | Seeded property tests: tier ordering, spec formulas, thresholds, confidence and heuristic bounds. |
 | `tests/recent.test.mjs` | Unit tests for the recent list. |
 | `tests/history.test.mjs` | Unit tests for the local price history. |
 | `tests/parser.test.mjs` | DOM tests (jsdom) for `amazon-parser.js` using the mock pages as fixtures. |

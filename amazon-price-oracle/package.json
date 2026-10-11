@@ -1,6 +1,6 @@
 {
   "name": "amazon-price-oracle",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "private": true,
   "description": "PriceOracle Chrome extension (Manifest V3). No runtime dependencies.",
   "scripts": {
